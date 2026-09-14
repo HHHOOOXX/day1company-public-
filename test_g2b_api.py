@@ -206,19 +206,38 @@ def fetch_all_bids(category: str = "용역", days: int = 30, page_size: int = 10
     )
 
 
-def fetch_bids_for_date(category: str = "용역", target_date=None, page_size: int = 100, max_pages: int = 20):
-    """특정 날짜(target_date, date 객체) 하루 동안 게시된 공고만 수집한다. 기본값: 전날."""
+def get_lookback_range(today=None):
+    """오늘 요일에 따라 확인할 날짜 범위(시작일, 종료일)를 정한다.
+    월요일은 주말 동안 아무도 못 본 금~일요일 3일치를 한꺼번에, 그 외 요일은 어제 하루만 확인한다."""
+    if today is None:
+        today = datetime.now().date()
+
+    if today.weekday() == 0:  # 0 = 월요일
+        start_date = today - timedelta(days=3)  # 금요일
+    else:
+        start_date = today - timedelta(days=1)  # 어제
+
+    end_date = today - timedelta(days=1)
+    return start_date, end_date
+
+
+def fetch_bids_for_date_range(category: str = "용역", start_date=None, end_date=None, page_size: int = 100, max_pages: int = 20):
+    """start_date~end_date(둘 다 date 객체, 포함) 기간 동안 게시된 공고를 수집한다. 기본값: get_lookback_range() 결과."""
     if category not in OPERATIONS:
         raise ValueError(f"category는 {list(OPERATIONS.keys())} 중 하나여야 합니다.")
 
-    if target_date is None:
-        target_date = (datetime.now() - timedelta(days=1)).date()
+    if start_date is None or end_date is None:
+        start_date, end_date = get_lookback_range()
 
     operation = OPERATIONS[category]
-    begin_str = target_date.strftime("%Y%m%d0000")
-    end_str = target_date.strftime("%Y%m%d2359")
+    begin_str = start_date.strftime("%Y%m%d0000")
+    end_str = end_date.strftime("%Y%m%d2359")
 
-    print(f"[요청] {category} / {target_date.isoformat()} (전날 기준) 공고")
+    if start_date == end_date:
+        print(f"[요청] {category} / {start_date.isoformat()} 공고")
+    else:
+        print(f"[요청] {category} / {start_date.isoformat()} ~ {end_date.isoformat()} 공고 (주말 포함 구간)")
+
     return _fetch_paginated(operation, begin_str, end_str, page_size, max_pages)
 
 
@@ -321,17 +340,21 @@ def is_relevant_bid(item: dict) -> bool:
     return _matches_any(title, EDU_KEYWORDS) and _matches_any(org, ORG_KEYWORDS)
 
 
-def get_daily_relevant_bids(categories=("용역",), target_date=None):
-    """전날 게시된 공고 중, 중복 제거 + 우리팀 관심 조건(키워드∩발주기관)을 만족하는 공고만 반환한다.
+def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=None):
+    """지정 기간(기본값: get_lookback_range() — 월요일은 금~일 3일, 그 외엔 어제 하루) 동안 게시된 공고 중,
+    중복 제거 + 우리팀 관심 조건(키워드∩발주기관)을 만족하는 공고만 반환한다.
     (매일 지정 시각에 실행되는 슬랙 알림 배치에서 호출할 핵심 함수)"""
-    if target_date is None:
-        target_date = (datetime.now() - timedelta(days=1)).date()
+    if start_date is None or end_date is None:
+        start_date, end_date = get_lookback_range()
 
-    print(f"[일일 배치] 기준일(전날): {target_date.isoformat()}")
+    if start_date == end_date:
+        print(f"[일일 배치] 기준일: {start_date.isoformat()}")
+    else:
+        print(f"[일일 배치] 기준 기간: {start_date.isoformat()} ~ {end_date.isoformat()} (월요일, 주말 포함)")
 
     raw_items = []
     for category in categories:
-        raw_items.extend(fetch_bids_for_date(category=category, target_date=target_date))
+        raw_items.extend(fetch_bids_for_date_range(category=category, start_date=start_date, end_date=end_date))
 
     deduped = dedupe_latest(raw_items)
     print(f"[중복제거] {len(raw_items)}건 → {len(deduped)}건 (공고번호 기준 최신 차수만 유지)")
@@ -356,15 +379,16 @@ def print_daily_digest(items: list):
         print(f"     링크: {item.get('bidNtceDtlUrl', '')}")
 
 
-def format_slack_message(items: list, target_date, categories=("용역",)) -> str:
+def format_slack_message(items: list, start_date, end_date, categories=("용역",)) -> str:
     """Slack Incoming Webhook로 보낼 메시지 텍스트(mrkdwn)를 만든다."""
     category_label = "/".join(categories)
-    header = f"*\U0001F4CB 나라장터 입찰공고 알림 — {target_date.isoformat()} 게시분 ({len(items)}건)*"
+    period_label = start_date.isoformat() if start_date == end_date else f"{start_date.isoformat()}~{end_date.isoformat()}"
+    header = f"*\U0001F4CB 나라장터 입찰공고 알림 — {period_label} 게시분 ({len(items)}건)*"
 
     if not items:
         return (
             f"{header}\n"
-            f"{target_date.isoformat()}에 게시된 {category_label} 공고를 확인했지만, "
+            f"{period_label}에 게시된 {category_label} 공고를 확인했지만, "
             f"교육/양성 키워드 + 대학교·지자체 발주기관 조건을 모두 만족하는 신규 공고가 없었습니다."
         )
 
@@ -402,10 +426,11 @@ def send_to_slack(text: str, webhook_url: str = None) -> bool:
 
 
 def run_daily_notification(categories=("용역",)):
-    """전날 기준 관심 공고를 수집해 Slack으로 발송한다. (스케줄러가 매일 호출할 진입점)"""
-    target_date = (datetime.now() - timedelta(days=1)).date()
-    items = get_daily_relevant_bids(categories=categories, target_date=target_date)
-    message = format_slack_message(items, target_date, categories=categories)
+    """기준 기간(월요일은 금~일 3일, 그 외엔 어제 하루) 관심 공고를 수집해 Slack으로 발송한다.
+    (스케줄러가 매일 호출할 진입점)"""
+    start_date, end_date = get_lookback_range()
+    items = get_daily_relevant_bids(categories=categories, start_date=start_date, end_date=end_date)
+    message = format_slack_message(items, start_date, end_date, categories=categories)
     print("\n----- 발송할 메시지 미리보기 -----")
     print(message)
     send_to_slack(message)

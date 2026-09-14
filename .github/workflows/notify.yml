@@ -2,8 +2,9 @@ name: G2B Bid Slack Notify
 
 on:
   schedule:
-    # 09:00 KST = 00:00 UTC, 매일
-    - cron: "0 0 * * *"
+    # 09:00 KST = 00:00 UTC, 평일(월~금)만 실행
+    # 월요일 실행분은 스크립트 로직상 금~일 3일치를 함께 확인하므로 주말 실행은 불필요
+    - cron: "0 0 * * 1-5"
   workflow_dispatch: {}
 
 jobs:
