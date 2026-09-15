@@ -32,6 +32,7 @@ from .slack import (
     format_bizinfo_message,
     format_pre_spec_message,
     format_slack_message,
+    format_urgent_digest,
     print_daily_digest,
     send_to_slack,
 )
@@ -89,17 +90,24 @@ def run_daily_notification(categories=("용역",), include_pre_spec: bool = True
     all_pairs += bid_pairs
     message = format_slack_message([item for _, item in bid_pairs], start_date, end_date, categories=categories)
 
+    urgent_entries = [("입찰", "마감", item) for _, item in bid_pairs]
+
     if include_pre_spec:
         pre_specs = get_daily_relevant_pre_specs(start_date=start_date, end_date=end_date)
         pre_spec_pairs = _filter_unnotified(conn, "g2b_prespec", pre_specs, today_str)
         all_pairs += pre_spec_pairs
         message += "\n\n" + format_pre_spec_message([item for _, item in pre_spec_pairs], start_date, end_date)
+        urgent_entries += [("사전규격", "의견", item) for _, item in pre_spec_pairs]
 
     if include_bizinfo and BIZINFO_SERVICE_KEY:
         bizinfo_items = get_daily_relevant_bizinfo(start_date=start_date, end_date=end_date)
         bizinfo_pairs = _filter_unnotified(conn, "bizinfo", bizinfo_items, today_str)
         all_pairs += bizinfo_pairs
         message += "\n\n" + format_bizinfo_message([item for _, item in bizinfo_pairs], start_date, end_date)
+        urgent_entries += [("기업마당", "신청", item) for _, item in bizinfo_pairs]
+
+    if urgent_entries:
+        message = format_urgent_digest(urgent_entries, today=datetime.now().date()) + "\n\n" + message
 
     if COLLECTION_WARNINGS:
         warning_lines = "\n".join(f"- {w}" for w in COLLECTION_WARNINGS)
