@@ -29,7 +29,8 @@ jobs:
         env:
           G2B_SERVICE_KEY: ${{ secrets.G2B_SERVICE_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          # ALIO_SERVICE_KEY, BIZINFO_SERVICE_KEY는 키 발급 후 여기에 추가 예정 (아직 discover 모드만 지원)
+          BIZINFO_SERVICE_KEY: ${{ secrets.BIZINFO_SERVICE_KEY }}
+          # ALIO_SERVICE_KEY는 실제 호출 방식을 아직 못 찾아 보류 중 (g2b_notifier/alio.py 참고)
         run: python test_g2b_api.py notify 용역
 
       # data/notifier.db(중복 발송 방지용 상태)를 repo에 커밋해서 다음 실행에서도 이어서 쓴다.
