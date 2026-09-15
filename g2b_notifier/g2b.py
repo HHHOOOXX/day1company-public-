@@ -18,36 +18,48 @@ from .config import (
 )
 
 
-def _call_api(operation: str, params: dict, base_url: str = BASE_URL):
-    """API 호출 + 공통 응답 파싱. 실패 시 None 반환."""
+def _call_api(operation: str, params: dict, base_url: str = BASE_URL, max_retries: int = 3):
+    """API 호출 + 공통 응답 파싱. 나라장터 API가 간헐적으로 빈 응답/오류를 주는 경우가 있어
+    최대 max_retries번까지 재시도하고, 그래도 실패하면 None을 반환한다."""
     url = f"{base_url}/{operation}"
-    resp = requests.get(url, params=params, timeout=15)
 
-    content_type = resp.headers.get("Content-Type", "")
-    if "json" not in content_type.lower():
-        print("[경고] 응답이 JSON이 아닙니다. 서비스키나 파라미터를 확인하세요.")
-        print("------ 원문 응답 (앞 1000자) ------")
-        print(resp.text[:1000])
-        return None
+    for attempt in range(1, max_retries + 1):
+        resp = requests.get(url, params=params, timeout=15)
 
-    data = resp.json()
-    header = data.get("response", {}).get("header", {})
-    result_code = header.get("resultCode")
-    result_msg = header.get("resultMsg")
+        content_type = resp.headers.get("Content-Type", "")
+        if "json" not in content_type.lower():
+            print(f"[경고] 응답이 JSON이 아닙니다. (시도 {attempt}/{max_retries})")
+            if attempt == max_retries:
+                print("------ 원문 응답 (앞 1000자) ------")
+                print(resp.text[:1000])
+                return None
+            time.sleep(1)
+            continue
 
-    if result_code != "00":
-        print(f"[에러] 결과코드 {result_code} / {result_msg}")
-        return None
+        data = resp.json()
+        header = data.get("response", {}).get("header", {})
+        result_code = header.get("resultCode")
+        result_msg = header.get("resultMsg")
 
-    body = data.get("response", {}).get("body", {})
-    items = body.get("items", [])
-    if isinstance(items, str):
-        items = []
+        if result_code != "00":
+            print(f"[재시도] 결과코드 {result_code} / {result_msg} (시도 {attempt}/{max_retries})")
+            if attempt == max_retries:
+                print(f"[에러] {max_retries}회 재시도 후에도 실패, 이 페이지는 건너뜁니다.")
+                return None
+            time.sleep(1)
+            continue
 
-    return {
-        "totalCount": body.get("totalCount", 0),
-        "items": items,
-    }
+        body = data.get("response", {}).get("body", {})
+        items = body.get("items", [])
+        if isinstance(items, str):
+            items = []
+
+        return {
+            "totalCount": body.get("totalCount", 0),
+            "items": items,
+        }
+
+    return None
 
 
 def fetch_recent_bids(category: str = "용역", days: int = 2, num_of_rows: int = 20):
