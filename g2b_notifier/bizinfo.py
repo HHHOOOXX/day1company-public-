@@ -14,7 +14,7 @@ import requests
 
 from .classify import dedupe_latest, is_relevant_bid
 from .config import BIZINFO_API_URL, BIZINFO_SERVICE_KEY
-from .g2b import get_lookback_range
+from .g2b import COLLECTION_WARNINGS, get_lookback_range
 
 
 def fetch_bizinfo_preview(page_size: int = 10):
@@ -98,7 +98,8 @@ def fetch_bizinfo_for_date_range(start_date=None, end_date=None, page_size: int 
         }
         resp = requests.get(BIZINFO_API_URL, params=params, timeout=15)
         if "json" not in resp.headers.get("Content-Type", "").lower():
-            print("[경고] 기업마당 응답이 JSON이 아닙니다. crtfcKey를 확인하세요.")
+            print(f"[경고] 기업마당 응답이 JSON이 아닙니다 ({page}페이지). crtfcKey를 확인하세요.")
+            COLLECTION_WARNINGS.append(f"기업마당 {page}페이지: 응답이 JSON이 아님")
             break
 
         items = resp.json().get("jsonArray", [])

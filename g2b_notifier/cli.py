@@ -20,6 +20,7 @@ from .bizinfo import fetch_bizinfo_preview, get_daily_relevant_bizinfo
 from .classify import tag_business_area
 from .config import BIZINFO_SERVICE_KEY
 from .g2b import (
+    COLLECTION_WARNINGS,
     analyze_classifications,
     fetch_pre_spec_preview,
     fetch_recent_bids,
@@ -81,6 +82,7 @@ def run_daily_notification(categories=("용역",), include_pre_spec: bool = True
     today_str = datetime.now().date().isoformat()
     conn = db.get_connection()
     all_pairs = []
+    COLLECTION_WARNINGS.clear()
 
     bids = get_daily_relevant_bids(categories=categories, start_date=start_date, end_date=end_date)
     bid_pairs = _filter_unnotified(conn, "g2b_bid", bids, today_str)
@@ -98,6 +100,13 @@ def run_daily_notification(categories=("용역",), include_pre_spec: bool = True
         bizinfo_pairs = _filter_unnotified(conn, "bizinfo", bizinfo_items, today_str)
         all_pairs += bizinfo_pairs
         message += "\n\n" + format_bizinfo_message([item for _, item in bizinfo_pairs], start_date, end_date)
+
+    if COLLECTION_WARNINGS:
+        warning_lines = "\n".join(f"- {w}" for w in COLLECTION_WARNINGS)
+        message = (
+            "*⚠️ 일부 데이터 수집에 실패했습니다 — 이 알림이 불완전할 수 있습니다.*\n"
+            f"{warning_lines}\n나라장터/기업마당에서 직접 한 번 더 확인해주세요.\n\n"
+        ) + message
 
     print("\n----- 발송할 메시지 미리보기 -----")
     print(message)

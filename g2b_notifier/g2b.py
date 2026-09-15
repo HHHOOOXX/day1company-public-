@@ -18,9 +18,15 @@ from .config import (
 )
 
 
-def _call_api(operation: str, params: dict, base_url: str = BASE_URL, max_retries: int = 3):
+# 페이지 수집이 재시도 끝에도 실패한 경우 여기 쌓인다.
+# run_daily_notification이 발송 직전에 확인해서, 비어있지 않으면 슬랙 메시지에 경고를 붙인다.
+COLLECTION_WARNINGS = []
+
+
+def _call_api(operation: str, params: dict, base_url: str = BASE_URL, max_retries: int = 4):
     """API 호출 + 공통 응답 파싱. 나라장터 API가 간헐적으로 빈 응답/오류를 주는 경우가 있어
-    최대 max_retries번까지 재시도하고, 그래도 실패하면 None을 반환한다."""
+    지수 백오프(1s, 2s, 4s, ...)로 최대 max_retries번까지 재시도한다.
+    그래도 실패하면 COLLECTION_WARNINGS에 기록하고 None을 반환한다."""
     url = f"{base_url}/{operation}"
 
     for attempt in range(1, max_retries + 1):
@@ -32,8 +38,9 @@ def _call_api(operation: str, params: dict, base_url: str = BASE_URL, max_retrie
             if attempt == max_retries:
                 print("------ 원문 응답 (앞 1000자) ------")
                 print(resp.text[:1000])
+                COLLECTION_WARNINGS.append(f"{operation}: 응답이 JSON이 아님 ({max_retries}회 재시도 소진)")
                 return None
-            time.sleep(1)
+            time.sleep(2 ** (attempt - 1))
             continue
 
         data = resp.json()
@@ -45,8 +52,9 @@ def _call_api(operation: str, params: dict, base_url: str = BASE_URL, max_retrie
             print(f"[재시도] 결과코드 {result_code} / {result_msg} (시도 {attempt}/{max_retries})")
             if attempt == max_retries:
                 print(f"[에러] {max_retries}회 재시도 후에도 실패, 이 페이지는 건너뜁니다.")
+                COLLECTION_WARNINGS.append(f"{operation}: 결과코드 {result_code}/{result_msg} ({max_retries}회 재시도 소진)")
                 return None
-            time.sleep(1)
+            time.sleep(2 ** (attempt - 1))
             continue
 
         body = data.get("response", {}).get("body", {})
@@ -119,9 +127,12 @@ def fetch_pre_spec_preview(days: int = 7, num_of_rows: int = 20):
 
 
 def _fetch_paginated(operation: str, begin_str: str, end_str: str, page_size: int = 100, max_pages: int = 20, base_url: str = BASE_URL):
-    """지정한 기간(begin_str~end_str, YYYYMMDDHHMM 형식)의 공고를 페이지네이션으로 전부 수집한다."""
+    """지정한 기간(begin_str~end_str, YYYYMMDDHHMM 형식)의 공고를 페이지네이션으로 전부 수집한다.
+    특정 페이지가 재시도 끝에도 실패하면(COLLECTION_WARNINGS에 기록됨), 그 페이지만 건너뛰고
+    나머지 페이지는 계속 시도한다 — 한 페이지 실패로 뒤쪽 페이지까지 통째로 놓치지 않기 위함."""
     all_items = []
     total_count = None
+    failed_pages = 0
 
     for page in range(1, max_pages + 1):
         params = {
@@ -136,7 +147,10 @@ def _fetch_paginated(operation: str, begin_str: str, end_str: str, page_size: in
 
         result = _call_api(operation, params, base_url=base_url)
         if result is None:
-            break
+            failed_pages += 1
+            if total_count is not None and page * page_size >= total_count:
+                break  # 마지막 페이지 근처였던 것으로 보이면 그냥 종료
+            continue
 
         if total_count is None:
             total_count = result["totalCount"]
@@ -154,6 +168,8 @@ def _fetch_paginated(operation: str, begin_str: str, end_str: str, page_size: in
 
         time.sleep(0.2)  # 과도한 연속 호출 방지
 
+    if failed_pages:
+        print(f"[경고] {failed_pages}개 페이지는 재시도 후에도 실패해서 건너뛰었습니다 (일부 공고 누락 가능).")
     print(f"[완료] {len(all_items)}건 수집됨 (전체 {total_count}건 중, max_pages={max_pages} 제한)")
     return all_items
 
