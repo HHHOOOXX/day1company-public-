@@ -1,0 +1,42 @@
+name: G2B Bid Slack Notify (Backup)
+
+# 정시 실행(notify.yml, 10:07 KST)이 GitHub Actions 스케줄 지연/스킵으로 안 돌았을 때를 대비한 안전망.
+# --quiet-if-empty 덕분에, 정시 실행이 이미 정상적으로 발송했다면 오늘 공고는 전부 notified 처리돼 있어서
+# 이 워크플로우는 조용히 아무것도 안 보내고 끝난다. 정시 실행이 실제로 안 됐을 때만 대신 발송한다.
+
+on:
+  schedule:
+    # 12:07 KST = 03:07 UTC, 평일만 실행 (정시 실행 대비 2시간 버퍼)
+    - cron: "7 3 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  notify-backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run backup notification (quiet if already sent)
+        env:
+          G2B_SERVICE_KEY: ${{ secrets.G2B_SERVICE_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          BIZINFO_SERVICE_KEY: ${{ secrets.BIZINFO_SERVICE_KEY }}
+        run: python test_g2b_api.py notify 용역 --quiet-if-empty
+
+      - name: Commit updated notifier DB
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/notifier.db
+          git diff --cached --quiet && echo "No DB changes to commit" || git commit -m "chore: update notifier db (backup run) [skip ci]"
+          git push

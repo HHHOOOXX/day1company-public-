@@ -1,7 +1,10 @@
 """CLI 진입점.
 
 서브커맨드:
-  notify [카테고리1,카테고리2,...]   - 실제 Slack 발송 (+ SQLite에 upsert, 중복 발송 방지)
+  notify [카테고리1,카테고리2,...] [--quiet-if-empty]
+                                       - 실제 Slack 발송 (+ SQLite에 upsert, 중복 발송 방지)
+                                         --quiet-if-empty: 새 공고/수집경고가 없으면 발송 자체를 생략
+                                         (정시 실행이 지연될 때를 대비한 백업 스케줄용)
   daily [카테고리1,카테고리2,...]    - 발송 전 미리보기 (DB에 손대지 않음, 콘솔 텍스트)
   preview [카테고리1,카테고리2,...]  - 발송 전 미리보기 (DB에 손대지 않음, Slack UI처럼 생긴 로컬 HTML로 브라우저에 열림)
   classify [카테고리] [일수]          - 업종분류/키워드 교차 집계
@@ -76,11 +79,17 @@ def _filter_unnotified(conn, source: str, items: list, today_str: str) -> list:
     return fresh
 
 
-def run_daily_notification(categories=("용역",), include_pre_spec: bool = True, include_bizinfo: bool = True):
+def run_daily_notification(
+    categories=("용역",), include_pre_spec: bool = True, include_bizinfo: bool = True, quiet_if_empty: bool = False
+):
     """기준 기간(월요일은 직전 금요일 하루, 그 외엔 어제 하루) 관심 공고 + 사전규격(용역) + 기업마당
     지원사업을 수집해 Slack으로 발송한다.
     발송 전 SQLite(data/notifier.db)에 upsert하고, 예전에 이미 발송된 공고는 다시 보내지 않는다.
-    (스케줄러가 매일 호출할 진입점)"""
+    (스케줄러가 매일 호출할 진입점)
+
+    quiet_if_empty=True면, 새로 보낼 공고도 없고 수집 경고도 없을 때 아무 메시지도 보내지 않고 조용히 종료한다.
+    — 정시 실행이 지연/스킵될 경우를 대비한 "백업" 스케줄에서 쓴다. 정시 실행이 이미 정상적으로 보냈다면
+    오늘 공고는 전부 notified 처리돼 있어서 백업 실행은 자연히 빈 결과가 되어 아무것도 다시 보내지 않는다."""
     start_date, end_date = get_lookback_range()
     today_str = datetime.now().date().isoformat()
     conn = db.get_connection()
@@ -118,6 +127,11 @@ def run_daily_notification(categories=("용역",), include_pre_spec: bool = True
             f"{warning_lines}\n나라장터/기업마당에서 직접 한 번 더 확인해주세요.\n\n"
         ) + message
 
+    if quiet_if_empty and not all_pairs and not COLLECTION_WARNINGS:
+        print("[백업 실행] 새로 보낼 공고도, 수집 경고도 없어서 조용히 종료합니다 (정시 실행이 이미 처리한 것으로 보임).")
+        conn.close()
+        return
+
     print("\n----- 발송할 메시지 미리보기 -----")
     print(message)
 
@@ -130,8 +144,11 @@ def run_daily_notification(categories=("용역",), include_pre_spec: bool = True
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "notify":
-        categories = sys.argv[2].split(",") if len(sys.argv) > 2 else ["용역"]
-        run_daily_notification(categories=categories)
+        args = sys.argv[2:]
+        quiet_if_empty = "--quiet-if-empty" in args
+        positional = [a for a in args if not a.startswith("--")]
+        categories = positional[0].split(",") if positional else ["용역"]
+        run_daily_notification(categories=categories, quiet_if_empty=quiet_if_empty)
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "classify":
