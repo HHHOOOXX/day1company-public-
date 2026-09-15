@@ -256,16 +256,16 @@ def fetch_all_bids(category: str = "용역", days: int = 30, page_size: int = 10
 
 def get_lookback_range(today=None):
     """오늘 요일에 따라 확인할 날짜 범위(시작일, 종료일)를 정한다.
-    월요일은 주말 동안 아무도 못 본 금~일요일 3일치를 한꺼번에, 그 외 요일은 어제 하루만 확인한다."""
+    주말에는 공고가 올라오지 않으므로, 월요일은 직전 금요일 하루만, 그 외 요일은 어제 하루만 확인한다."""
     if today is None:
         today = datetime.now().date()
 
     if today.weekday() == 0:  # 0 = 월요일
-        start_date = today - timedelta(days=3)  # 금요일
+        start_date = today - timedelta(days=3)  # 금요일 (토/일은 공고가 없어 건너뜀)
     else:
         start_date = today - timedelta(days=1)  # 어제
 
-    end_date = today - timedelta(days=1)
+    end_date = start_date
     return start_date, end_date
 
 
@@ -434,7 +434,7 @@ def is_relevant_bid(item: dict) -> bool:
 
 
 def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=None):
-    """지정 기간(기본값: get_lookback_range() — 월요일은 금~일 3일, 그 외엔 어제 하루) 동안 게시된 공고 중,
+    """지정 기간(기본값: get_lookback_range() — 월요일은 직전 금요일 하루, 그 외엔 어제 하루) 동안 게시된 공고 중,
     중복 제거 + 우리팀 관심 조건(키워드∩발주기관)을 만족하는 공고만 반환한다.
     (매일 지정 시각에 실행되는 슬랙 알림 배치에서 호출할 핵심 함수)"""
     if start_date is None or end_date is None:
@@ -443,7 +443,7 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
     if start_date == end_date:
         print(f"[일일 배치] 기준일: {start_date.isoformat()}")
     else:
-        print(f"[일일 배치] 기준 기간: {start_date.isoformat()} ~ {end_date.isoformat()} (월요일, 주말 포함)")
+        print(f"[일일 배치] 기준 기간: {start_date.isoformat()} ~ {end_date.isoformat()}")
 
     raw_items = []
     for category in categories:
@@ -564,7 +564,7 @@ def send_to_slack(text: str, webhook_url: str = None) -> bool:
 
 
 def run_daily_notification(categories=("용역",), include_pre_spec: bool = True):
-    """기준 기간(월요일은 금~일 3일, 그 외엔 어제 하루) 관심 공고 + 사전규격(용역)을 수집해 Slack으로 발송한다.
+    """기준 기간(월요일은 직전 금요일 하루, 그 외엔 어제 하루) 관심 공고 + 사전규격(용역)을 수집해 Slack으로 발송한다.
     (스케줄러가 매일 호출할 진입점)"""
     start_date, end_date = get_lookback_range()
     items = get_daily_relevant_bids(categories=categories, start_date=start_date, end_date=end_date)
