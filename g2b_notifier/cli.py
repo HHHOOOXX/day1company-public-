@@ -2,7 +2,8 @@
 
 서브커맨드:
   notify [카테고리1,카테고리2,...]   - 실제 Slack 발송 (+ SQLite에 upsert, 중복 발송 방지)
-  daily [카테고리1,카테고리2,...]    - 발송 전 미리보기 (DB에 손대지 않음)
+  daily [카테고리1,카테고리2,...]    - 발송 전 미리보기 (DB에 손대지 않음, 콘솔 텍스트)
+  preview [카테고리1,카테고리2,...]  - 발송 전 미리보기 (DB에 손대지 않음, Slack UI처럼 생긴 로컬 HTML로 브라우저에 열림)
   classify [카테고리] [일수]          - 업종분류/키워드 교차 집계
   prespec [일수]                      - 사전규격(용역) 원본 필드 탐색
   bizinfo-discover                    - 기업마당 원본 필드 탐색 (BIZINFO_SERVICE_KEY 필요)
@@ -28,6 +29,7 @@ from .g2b import (
     get_daily_relevant_pre_specs,
     get_lookback_range,
 )
+from .preview import write_and_open_preview
 from .slack import (
     format_bizinfo_message,
     format_pre_spec_message,
@@ -162,6 +164,22 @@ def main():
             return
         print("\n===== ALIO 원본 응답 (전체 필드 확인용) =====")
         print(json.dumps(data, ensure_ascii=False, indent=2)[:4000])
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "preview":
+        categories = sys.argv[2].split(",") if len(sys.argv) > 2 else ["용역"]
+        start_date, end_date = get_lookback_range()
+        COLLECTION_WARNINGS.clear()
+
+        bid_items = get_daily_relevant_bids(categories=categories, start_date=start_date, end_date=end_date)
+        pre_spec_items = get_daily_relevant_pre_specs(start_date=start_date, end_date=end_date)
+        bizinfo_items = (
+            get_daily_relevant_bizinfo(start_date=start_date, end_date=end_date) if BIZINFO_SERVICE_KEY else []
+        )
+
+        write_and_open_preview(
+            bid_items, pre_spec_items, bizinfo_items, start_date, end_date, warnings=list(COLLECTION_WARNINGS)
+        )
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "daily":
