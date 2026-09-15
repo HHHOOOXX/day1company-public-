@@ -9,6 +9,9 @@ on:
     - cron: "0 1 * * 1-5"
   workflow_dispatch: {}
 
+permissions:
+  contents: write  # data/notifier.db 변경사항을 워크플로우가 직접 커밋하기 위해 필요
+
 jobs:
   notify:
     runs-on: ubuntu-latest
@@ -26,4 +29,15 @@ jobs:
         env:
           G2B_SERVICE_KEY: ${{ secrets.G2B_SERVICE_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # ALIO_SERVICE_KEY, BIZINFO_SERVICE_KEY는 키 발급 후 여기에 추가 예정 (아직 discover 모드만 지원)
         run: python test_g2b_api.py notify 용역
+
+      # data/notifier.db(중복 발송 방지용 상태)를 repo에 커밋해서 다음 실행에서도 이어서 쓴다.
+      # GitHub Actions엔 영구 서버가 없어서, DB 파일 자체를 git으로 버전관리하는 방식으로 상태를 유지한다.
+      - name: Commit updated notifier DB
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/notifier.db
+          git diff --cached --quiet && echo "No DB changes to commit" || git commit -m "chore: update notifier db [skip ci]"
+          git push
