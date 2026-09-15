@@ -73,6 +73,33 @@ def format_pre_spec_message(items: list, start_date, end_date) -> str:
     return "\n".join(lines)
 
 
+def format_bizinfo_message(items: list, start_date, end_date) -> str:
+    """기업마당(중소기업 지원사업) 알림 섹션을 Slack mrkdwn 텍스트로 만든다."""
+    period_label = start_date.isoformat() if start_date == end_date else f"{start_date.isoformat()}~{end_date.isoformat()}"
+    header = f"*\U0001F3E2 기업마당 지원사업 알림 — {period_label} 등록분 ({len(items)}건)*"
+
+    if not items:
+        return (
+            f"{header}\n"
+            f"{period_label}에 등록된 지원사업 공고를 확인했지만, "
+            f"교육/양성 키워드 + 기관 조건을 모두 만족하는 신규 건이 없었습니다."
+        )
+
+    lines = [header, ""]
+    for idx, item in enumerate(items, 1):
+        org = item.get("ntceInsttNm", "")
+        title = item.get("bidNtceNm", "")
+        period = item.get("bidClseDt") or "미정"
+        url = item.get("bidNtceDtlUrl", "")
+        if url:
+            lines.append(f"{idx}. *[{org}]* <{url}|{title}>")
+        else:
+            lines.append(f"{idx}. *[{org}]* {title}")
+        lines.append(f"     신청기간: {period}")
+
+    return "\n".join(lines)
+
+
 def send_to_slack(text: str, webhook_url: str = None) -> bool:
     """Slack Incoming Webhook으로 텍스트 메시지를 보낸다."""
     webhook_url = webhook_url or os.getenv("SLACK_WEBHOOK_URL")

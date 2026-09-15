@@ -16,8 +16,9 @@ from datetime import datetime
 
 from . import db
 from .alio import fetch_alio_preview
-from .bizinfo import fetch_bizinfo_preview
+from .bizinfo import fetch_bizinfo_preview, get_daily_relevant_bizinfo
 from .classify import tag_business_area
+from .config import BIZINFO_SERVICE_KEY
 from .g2b import (
     analyze_classifications,
     fetch_pre_spec_preview,
@@ -26,7 +27,13 @@ from .g2b import (
     get_daily_relevant_pre_specs,
     get_lookback_range,
 )
-from .slack import format_pre_spec_message, format_slack_message, print_daily_digest, send_to_slack
+from .slack import (
+    format_bizinfo_message,
+    format_pre_spec_message,
+    format_slack_message,
+    print_daily_digest,
+    send_to_slack,
+)
 
 
 def _posting_id(source: str, item: dict) -> str:
@@ -65,31 +72,39 @@ def _filter_unnotified(conn, source: str, items: list, today_str: str) -> list:
     return fresh
 
 
-def run_daily_notification(categories=("용역",), include_pre_spec: bool = True):
-    """기준 기간(월요일은 직전 금요일 하루, 그 외엔 어제 하루) 관심 공고 + 사전규격(용역)을 수집해 Slack으로 발송한다.
+def run_daily_notification(categories=("용역",), include_pre_spec: bool = True, include_bizinfo: bool = True):
+    """기준 기간(월요일은 직전 금요일 하루, 그 외엔 어제 하루) 관심 공고 + 사전규격(용역) + 기업마당
+    지원사업을 수집해 Slack으로 발송한다.
     발송 전 SQLite(data/notifier.db)에 upsert하고, 예전에 이미 발송된 공고는 다시 보내지 않는다.
     (스케줄러가 매일 호출할 진입점)"""
     start_date, end_date = get_lookback_range()
     today_str = datetime.now().date().isoformat()
     conn = db.get_connection()
+    all_pairs = []
 
     bids = get_daily_relevant_bids(categories=categories, start_date=start_date, end_date=end_date)
     bid_pairs = _filter_unnotified(conn, "g2b_bid", bids, today_str)
+    all_pairs += bid_pairs
     message = format_slack_message([item for _, item in bid_pairs], start_date, end_date, categories=categories)
 
-    pre_spec_pairs = []
     if include_pre_spec:
         pre_specs = get_daily_relevant_pre_specs(start_date=start_date, end_date=end_date)
         pre_spec_pairs = _filter_unnotified(conn, "g2b_prespec", pre_specs, today_str)
+        all_pairs += pre_spec_pairs
         message += "\n\n" + format_pre_spec_message([item for _, item in pre_spec_pairs], start_date, end_date)
+
+    if include_bizinfo and BIZINFO_SERVICE_KEY:
+        bizinfo_items = get_daily_relevant_bizinfo(start_date=start_date, end_date=end_date)
+        bizinfo_pairs = _filter_unnotified(conn, "bizinfo", bizinfo_items, today_str)
+        all_pairs += bizinfo_pairs
+        message += "\n\n" + format_bizinfo_message([item for _, item in bizinfo_pairs], start_date, end_date)
 
     print("\n----- 발송할 메시지 미리보기 -----")
     print(message)
 
     sent = send_to_slack(message)
     if sent:
-        all_ids = [pid for pid, _ in bid_pairs] + [pid for pid, _ in pre_spec_pairs]
-        db.mark_notified(conn, all_ids)
+        db.mark_notified(conn, [pid for pid, _ in all_pairs])
 
     conn.close()
 
@@ -140,6 +155,11 @@ def main():
         print("\n\n===== 사전규격(용역) =====")
         pre_spec_items = get_daily_relevant_pre_specs()
         print_daily_digest(pre_spec_items)
+
+        if BIZINFO_SERVICE_KEY:
+            print("\n\n===== 기업마당 =====")
+            bizinfo_items = get_daily_relevant_bizinfo()
+            print_daily_digest(bizinfo_items)
         return
 
     category = sys.argv[1] if len(sys.argv) > 1 else "용역"

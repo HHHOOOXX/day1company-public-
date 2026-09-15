@@ -40,8 +40,9 @@ PRE_SPEC_LIST_OPERATION = "getPublicPrcureThngInfoServc"  # 사전규격 용역 
 # 기업마당(중소기업 지원사업 통합공고) - crtfcKey 발급 후 사용
 BIZINFO_API_URL = "https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do"
 
-# ALIO(공공기관 경영정보 공개시스템) 공공기관 정보 오픈API - 정확한 요청 스펙은 discover 모드로 확정 예정
-ALIO_PUBLIC_INST_URL = "https://opendata.alio.go.kr/openapi/service/rest/InstitutionInfoService/getPublicInstitutionInfo"
+# ALIO(공공기관 경영정보 공개시스템) - opendata.alio.go.kr 활용신청 승인 화면에서 확인한 End Point
+ALIO_PUBLIC_INST_URL = "https://opendata.alio.go.kr/v1/publicinst/list.do"  # 기관정보
+ALIO_BUSINESS_URL = "https://opendata.alio.go.kr/v1/business/list.do"  # 사업정보
 
 # 우리팀(교육회사, 대학교/지자체 대상 교육·양성사업) 필터링용 키워드 후보.
 # classify 모드로 실제 분류값과의 교차 결과를 보고 다듬어 나가면 됩니다.
