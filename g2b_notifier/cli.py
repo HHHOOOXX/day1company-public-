@@ -32,6 +32,7 @@ from .g2b import (
     get_daily_relevant_bids,
     get_daily_relevant_pre_specs,
     get_lookback_range,
+    set_collection_deadline,
 )
 from .preview import write_and_open_preview
 from .slack import (
@@ -91,6 +92,10 @@ def run_daily_notification(
     quiet_if_empty=True면, 새로 보낼 공고도 없고 수집 경고도 없을 때 아무 메시지도 보내지 않고 조용히 종료한다.
     — 정시 실행이 지연/스킵될 경우를 대비한 "백업" 스케줄에서 쓴다. 정시 실행이 이미 정상적으로 보냈다면
     오늘 공고는 전부 notified 처리돼 있어서 백업 실행은 자연히 빈 결과가 되어 아무것도 다시 보내지 않는다."""
+    # 나라장터/기업마당 API가 하루 종일 불안정한 날엔, 페이지별 재시도가 다 정상 동작해도
+    # 수십 페이지를 순서대로 재시도하느라 실행 자체가 수십 분씩 걸릴 수 있다. 그러면 "정시 발송"이
+    # 의미가 없어지므로, 전체 수집 단계에 3분 상한을 두고 넘기면 남은 건 포기하고 지금까지 모은 것만 보낸다.
+    set_collection_deadline(180)
     start_date, end_date = get_lookback_range()
     today_str = datetime.now().date().isoformat()
     conn = db.get_connection()

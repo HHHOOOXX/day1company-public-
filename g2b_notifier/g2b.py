@@ -22,13 +22,33 @@ from .config import (
 # run_daily_notification이 발송 직전에 확인해서, 비어있지 않으면 슬랙 메시지에 경고를 붙인다.
 COLLECTION_WARNINGS = []
 
+# 전체 수집 단계(나라장터 입찰+사전규격+기업마당 합산)의 시간 상한.
+# run_daily_notification 시작 시 set_collection_deadline()으로 설정된다.
+# 페이지별/호출별 재시도는 각자 정상 동작해도, API가 하루 종일 불안정하면 수십 페이지를
+# 순서대로 재시도하느라 실행이 수십 분씩 걸릴 수 있다 — 그러면 "정시 발송"의 의미가 없어지므로,
+# 이 상한을 넘기면 남은 페이지/소스는 그 자리에서 포기하고 지금까지 모은 것만으로 발송한다.
+COLLECTION_DEADLINE = None
+
+
+def set_collection_deadline(seconds: float):
+    global COLLECTION_DEADLINE
+    COLLECTION_DEADLINE = time.monotonic() + seconds
+
+
+def _deadline_exceeded() -> bool:
+    return COLLECTION_DEADLINE is not None and time.monotonic() > COLLECTION_DEADLINE
+
 
 def get_with_retry(url: str, params: dict, max_retries: int = 4, label: str = ""):
     """GET 요청. 연결 타임아웃/거부 등 네트워크 레벨 예외가 나면 지수 백오프(1s, 2s, 4s, ...)로
     최대 max_retries번까지 재시도한다. 그래도 실패하면 COLLECTION_WARNINGS에 기록하고 None을 반환한다.
     (정부 공공 API가 간헐적으로 연결 자체가 안 되는 경우가 있어, 이걸 못 잡으면 예외가 그대로
-    스크립트를 죽여 알림 발송 자체가 통째로 스킵된다.)"""
+    스크립트를 죽여 알림 발송 자체가 통째로 스킵된다.) 전체 수집 시간 상한을 넘겼으면 재시도 없이 바로 포기한다."""
     for attempt in range(1, max_retries + 1):
+        if _deadline_exceeded():
+            print(f"[경고] 전체 수집 시간 상한 초과 — {label} 재시도 중단")
+            COLLECTION_WARNINGS.append(f"{label}: 시간 상한 초과로 재시도 중단")
+            return None
         try:
             return requests.get(url, params=params, timeout=15)
         except requests.exceptions.RequestException as exc:
@@ -166,6 +186,11 @@ def _fetch_paginated(operation: str, begin_str: str, end_str: str, page_size: in
     failed_pages = 0
 
     for page in range(1, max_pages + 1):
+        if _deadline_exceeded():
+            print(f"[경고] 전체 수집 시간 상한 초과 — {page}페이지부터 중단합니다.")
+            COLLECTION_WARNINGS.append(f"{operation}: 시간 상한 초과로 {page}페이지부터 중단 (일부 공고 누락 가능)")
+            break
+
         params = {
             "ServiceKey": SERVICE_KEY,
             "inqryDiv": "1",
