@@ -1,8 +1,9 @@
 name: G2B Bid Slack Notify (Backup)
 
-# 정시 실행(notify.yml, 10:07 KST)이 GitHub Actions 스케줄 지연/스킵으로 안 돌았을 때를 대비한 안전망.
-# --quiet-if-empty 덕분에, 정시 실행이 이미 정상적으로 발송했다면 오늘 공고는 전부 notified 처리돼 있어서
-# 이 워크플로우는 조용히 아무것도 안 보내고 끝난다. 정시 실행이 실제로 안 됐을 때만 대신 발송한다.
+# 3중 안전망의 마지막 단계. 1차(외부 크론 → workflow_dispatch)와 2차(notify.yml의 자체 schedule)가
+# 둘 다 GitHub Actions 스케줄 지연/스킵으로 안 돌았을 때를 대비한 최종 백업.
+# --quiet-if-empty 덕분에, 앞 단계 중 하나라도 이미 정상적으로 발송했다면 오늘 공고는 전부 notified
+# 처리돼 있어서 이 워크플로우는 조용히 아무것도 안 보내고 끝난다. 둘 다 안 됐을 때만 대신 발송한다.
 
 on:
   schedule:

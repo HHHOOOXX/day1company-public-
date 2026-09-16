@@ -14,7 +14,7 @@ import requests
 
 from .classify import dedupe_latest, is_relevant_bid
 from .config import BIZINFO_API_URL, BIZINFO_SERVICE_KEY
-from .g2b import COLLECTION_WARNINGS, get_lookback_range
+from .g2b import COLLECTION_WARNINGS, get_lookback_range, get_with_retry
 
 
 def fetch_bizinfo_preview(page_size: int = 10):
@@ -96,13 +96,20 @@ def fetch_bizinfo_for_date_range(start_date=None, end_date=None, page_size: int 
             "pageUnit": str(page_size),
             "pageIndex": str(page),
         }
-        resp = requests.get(BIZINFO_API_URL, params=params, timeout=15)
+        resp = get_with_retry(BIZINFO_API_URL, params, label=f"기업마당 {page}페이지")
+        if resp is None:
+            break
         if "json" not in resp.headers.get("Content-Type", "").lower():
             print(f"[경고] 기업마당 응답이 JSON이 아닙니다 ({page}페이지). crtfcKey를 확인하세요.")
             COLLECTION_WARNINGS.append(f"기업마당 {page}페이지: 응답이 JSON이 아님")
             break
 
-        items = resp.json().get("jsonArray", [])
+        try:
+            items = resp.json().get("jsonArray", [])
+        except ValueError as exc:
+            print(f"[경고] 기업마당 JSON 파싱 실패 ({page}페이지): {exc}")
+            COLLECTION_WARNINGS.append(f"기업마당 {page}페이지: JSON 파싱 실패")
+            break
         if not items:
             break
 

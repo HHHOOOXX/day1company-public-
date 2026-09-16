@@ -1,11 +1,14 @@
 name: G2B Bid Slack Notify
 
 on:
+  # 정시 발송의 "진짜" 트리거는 외부 크론(cron-job.org 등)이 GitHub REST API로 호출하는
+  # workflow_dispatch다. schedule: 트리거는 GitHub 쪽 스케줄 큐 부하에 따라 지연되거나
+  # (실제로 이전 09:00 정각 스케줄이 4시간 넘게 지연되어 13:38에 실행된 사례 있음) 아예 안 걸릴 수도
+  # 있는 best-effort라, 여기서는 그게 어떤 이유로든 안 됐을 때 대신 보내는 2차 백업 역할만 한다.
   schedule:
     # 10:07 KST = 01:07 UTC, 평일(월~금)만 실행
     # 월요일 실행분은 스크립트 로직상 직전 금요일 하루치만 확인함(주말엔 공고가 올라오지 않으므로 토/일 조회 불필요)
     # 참고: 정각(:00)은 전세계적으로 스케줄이 몰려 GitHub Actions가 지연시키는 경우가 있어 :07로 분산
-    # (실제로 이전 09:00 정각 스케줄이 4시간 넘게 지연되어 13:38에 실행된 사례 있음 — 완전한 보장은 아니고 위험을 낮추는 정도)
     - cron: "7 1 * * 1-5"
   workflow_dispatch: {}
 
@@ -31,7 +34,15 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           BIZINFO_SERVICE_KEY: ${{ secrets.BIZINFO_SERVICE_KEY }}
           # ALIO_SERVICE_KEY는 실제 호출 방식을 아직 못 찾아 보류 중 (g2b_notifier/alio.py 참고)
-        run: python test_g2b_api.py notify 용역
+        # 외부 크론이 부르는 workflow_dispatch는 항상 전체 메시지를 보낸다(진짜 정시 발송).
+        # 내부 schedule은 백업이라, 외부 크론이 이미 정상적으로 보냈으면(오늘자 공고가 전부
+        # notified 처리돼 있으면) --quiet-if-empty 덕분에 조용히 넘어가고, 안 됐을 때만 대신 보낸다.
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            python test_g2b_api.py notify 용역 --quiet-if-empty
+          else
+            python test_g2b_api.py notify 용역
+          fi
 
       # data/notifier.db(중복 발송 방지용 상태)를 repo에 커밋해서 다음 실행에서도 이어서 쓴다.
       # GitHub Actions엔 영구 서버가 없어서, DB 파일 자체를 git으로 버전관리하는 방식으로 상태를 유지한다.

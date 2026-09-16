@@ -16,6 +16,7 @@
 
 import json
 import sys
+import traceback
 from datetime import datetime
 
 from . import db
@@ -96,7 +97,13 @@ def run_daily_notification(
     all_pairs = []
     COLLECTION_WARNINGS.clear()
 
-    bids = get_daily_relevant_bids(categories=categories, start_date=start_date, end_date=end_date)
+    try:
+        bids = get_daily_relevant_bids(categories=categories, start_date=start_date, end_date=end_date)
+    except Exception as exc:
+        print(f"[에러] 나라장터 입찰공고 수집 중 예외 발생: {exc!r}")
+        traceback.print_exc()
+        COLLECTION_WARNINGS.append(f"나라장터 입찰공고: 예외 발생 ({exc.__class__.__name__})")
+        bids = []
     bid_pairs = _filter_unnotified(conn, "g2b_bid", bids, today_str)
     all_pairs += bid_pairs
     message = format_slack_message([item for _, item in bid_pairs], start_date, end_date, categories=categories)
@@ -104,14 +111,26 @@ def run_daily_notification(
     urgent_entries = [("입찰", "마감", item) for _, item in bid_pairs]
 
     if include_pre_spec:
-        pre_specs = get_daily_relevant_pre_specs(start_date=start_date, end_date=end_date)
+        try:
+            pre_specs = get_daily_relevant_pre_specs(start_date=start_date, end_date=end_date)
+        except Exception as exc:
+            print(f"[에러] 나라장터 사전규격 수집 중 예외 발생: {exc!r}")
+            traceback.print_exc()
+            COLLECTION_WARNINGS.append(f"나라장터 사전규격: 예외 발생 ({exc.__class__.__name__})")
+            pre_specs = []
         pre_spec_pairs = _filter_unnotified(conn, "g2b_prespec", pre_specs, today_str)
         all_pairs += pre_spec_pairs
         message += "\n\n" + format_pre_spec_message([item for _, item in pre_spec_pairs], start_date, end_date)
         urgent_entries += [("사전규격", "의견", item) for _, item in pre_spec_pairs]
 
     if include_bizinfo and BIZINFO_SERVICE_KEY:
-        bizinfo_items = get_daily_relevant_bizinfo(start_date=start_date, end_date=end_date)
+        try:
+            bizinfo_items = get_daily_relevant_bizinfo(start_date=start_date, end_date=end_date)
+        except Exception as exc:
+            print(f"[에러] 기업마당 수집 중 예외 발생: {exc!r}")
+            traceback.print_exc()
+            COLLECTION_WARNINGS.append(f"기업마당: 예외 발생 ({exc.__class__.__name__})")
+            bizinfo_items = []
         bizinfo_pairs = _filter_unnotified(conn, "bizinfo", bizinfo_items, today_str)
         all_pairs += bizinfo_pairs
         message += "\n\n" + format_bizinfo_message([item for _, item in bizinfo_pairs], start_date, end_date)
@@ -148,7 +167,15 @@ def main():
         quiet_if_empty = "--quiet-if-empty" in args
         positional = [a for a in args if not a.startswith("--")]
         categories = positional[0].split(",") if positional else ["용역"]
-        run_daily_notification(categories=categories, quiet_if_empty=quiet_if_empty)
+        try:
+            run_daily_notification(categories=categories, quiet_if_empty=quiet_if_empty)
+        except Exception as exc:
+            # 소스별 try/except로도 못 막는, 완전히 예상 못한 버그용 마지막 안전망.
+            # 팀 채널에는 정리된 공고문만 보여야 하므로 슬랙으로는 알리지 않는다 —
+            # GitHub Actions 로그/실행 상태(빨간 X)로만 남기고 다시 raise한다.
+            print(f"[치명적 에러] 자동 발송이 처리되지 않은 예외로 중단됐습니다: {exc!r}")
+            traceback.print_exc()
+            raise
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "classify":

@@ -23,6 +23,24 @@ from .config import (
 COLLECTION_WARNINGS = []
 
 
+def get_with_retry(url: str, params: dict, max_retries: int = 4, label: str = ""):
+    """GET 요청. 연결 타임아웃/거부 등 네트워크 레벨 예외가 나면 지수 백오프(1s, 2s, 4s, ...)로
+    최대 max_retries번까지 재시도한다. 그래도 실패하면 COLLECTION_WARNINGS에 기록하고 None을 반환한다.
+    (정부 공공 API가 간헐적으로 연결 자체가 안 되는 경우가 있어, 이걸 못 잡으면 예외가 그대로
+    스크립트를 죽여 알림 발송 자체가 통째로 스킵된다.)"""
+    for attempt in range(1, max_retries + 1):
+        try:
+            return requests.get(url, params=params, timeout=15)
+        except requests.exceptions.RequestException as exc:
+            print(f"[재시도] 연결 실패: {exc} (시도 {attempt}/{max_retries})")
+            if attempt == max_retries:
+                print(f"[에러] {max_retries}회 재시도 후에도 연결 실패, 건너뜁니다.")
+                COLLECTION_WARNINGS.append(f"{label}: 연결 실패 ({exc.__class__.__name__}, {max_retries}회 재시도 소진)")
+                return None
+            time.sleep(2 ** (attempt - 1))
+    return None
+
+
 def _call_api(operation: str, params: dict, base_url: str = BASE_URL, max_retries: int = 4):
     """API 호출 + 공통 응답 파싱. 나라장터 API가 간헐적으로 빈 응답/오류를 주는 경우가 있어
     지수 백오프(1s, 2s, 4s, ...)로 최대 max_retries번까지 재시도한다.
@@ -30,7 +48,9 @@ def _call_api(operation: str, params: dict, base_url: str = BASE_URL, max_retrie
     url = f"{base_url}/{operation}"
 
     for attempt in range(1, max_retries + 1):
-        resp = requests.get(url, params=params, timeout=15)
+        resp = get_with_retry(url, params, max_retries=max_retries, label=operation)
+        if resp is None:
+            return None
 
         content_type = resp.headers.get("Content-Type", "")
         if "json" not in content_type.lower():
@@ -43,7 +63,18 @@ def _call_api(operation: str, params: dict, base_url: str = BASE_URL, max_retrie
             time.sleep(2 ** (attempt - 1))
             continue
 
-        data = resp.json()
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            print(f"[경고] JSON 파싱 실패: {exc} (시도 {attempt}/{max_retries})")
+            if attempt == max_retries:
+                print("------ 원문 응답 (앞 1000자) ------")
+                print(resp.text[:1000])
+                COLLECTION_WARNINGS.append(f"{operation}: JSON 파싱 실패 ({max_retries}회 재시도 소진)")
+                return None
+            time.sleep(2 ** (attempt - 1))
+            continue
+
         header = data.get("response", {}).get("header", {})
         result_code = header.get("resultCode")
         result_msg = header.get("resultMsg")

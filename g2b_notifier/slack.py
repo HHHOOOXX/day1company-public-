@@ -1,6 +1,7 @@
 """콘솔 미리보기 출력 + Slack 메시지 포맷팅/발송."""
 
 import os
+import time
 from datetime import datetime
 
 import requests
@@ -128,8 +129,10 @@ def format_bizinfo_message(items: list, start_date, end_date) -> str:
     return "\n".join(lines)
 
 
-def send_to_slack(text: str, webhook_url: str = None) -> bool:
-    """Slack Incoming Webhook으로 텍스트 메시지를 보낸다."""
+def send_to_slack(text: str, webhook_url: str = None, max_retries: int = 3) -> bool:
+    """Slack Incoming Webhook으로 텍스트 메시지를 보낸다.
+    데이터 수집을 다 마친 뒤 마지막에 호출되는 만큼, 연결 타임아웃 등으로 여기서 죽으면
+    수집한 내용이 통째로 날아가버린다 — 그래서 지수 백오프로 재시도한다."""
     webhook_url = webhook_url or os.getenv("SLACK_WEBHOOK_URL")
     if not webhook_url:
         print("[에러] SLACK_WEBHOOK_URL이 .env에 설정되어 있지 않습니다.")
@@ -137,10 +140,22 @@ def send_to_slack(text: str, webhook_url: str = None) -> bool:
         print("       SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...")
         return False
 
-    resp = requests.post(webhook_url, json={"text": text}, timeout=10)
-    if resp.status_code == 200 and resp.text.strip().lower() == "ok":
-        print("[슬랙] 발송 성공")
-        return True
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.post(webhook_url, json={"text": text}, timeout=10)
+        except requests.exceptions.RequestException as exc:
+            print(f"[슬랙] 연결 실패: {exc} (시도 {attempt}/{max_retries})")
+            if attempt == max_retries:
+                print(f"[슬랙] {max_retries}회 재시도 후에도 발송 실패")
+                return False
+            time.sleep(2 ** (attempt - 1))
+            continue
 
-    print(f"[슬랙] 발송 실패: HTTP {resp.status_code} / {resp.text[:300]}")
+        if resp.status_code == 200 and resp.text.strip().lower() == "ok":
+            print("[슬랙] 발송 성공")
+            return True
+
+        print(f"[슬랙] 발송 실패: HTTP {resp.status_code} / {resp.text[:300]}")
+        return False
+
     return False
