@@ -20,6 +20,8 @@ from io import BytesIO
 import olefile
 from pypdf import PdfReader
 
+from .config import EXCLUDE_KEYWORDS
+
 _HWPTAG_PARA_TEXT = 0x10 + 51  # HWPTAG_BEGIN(0x10) + 51
 
 
@@ -134,6 +136,24 @@ def requires_ineligible_certificate(text: str) -> bool:
     """본문 텍스트에 우리가 발급받을 수 없는 확인서(소상공인확인서/중소기업확인서류)가
     참가자격/제출서류로 명시돼 있으면 True."""
     return bool(_INELIGIBLE_CERTIFICATE_RE.search(text or ""))
+
+
+# 2026-09-22 피드백: 나라장터 API의 title 필드(사전규격 prdctClsfcNoNm은 품명 분류값, 입찰공고
+# bidNtceNm도 종종 영어 고유명사가 섞여 실제 내용을 가늠하기 어려운 경우가 있음)만으로는 진짜 사업
+# 내용을 알 수 없는 공고가 있다(실사례: R26BD00276858 — 고려대학교 ANCHOR사업단 공고. API 제목은
+# 일반 분류값이었지만 실제로는 "KU Global Tech Career Fair 운영 용역"으로, 행사 기획·부스 설치·
+# 홍보물 제작 등을 포함한 채용박람회 운영 대행 용역이었음 — EXCLUDE_KEYWORDS 도메인인데 제목 필드만
+# 봐서는 걸러지지 않았음). "과업명:" 라벨이 붙은 한 줄만 뽑아 확인하는 방식은 이 실사례에서 실패했다
+# (배제 근거인 "설치"/"홍보"가 과업범위 세부 항목에만 있고 과업명 줄 자체엔 없었음) — 그래서 첨부
+# 문서 본문 전체를 대상으로 검사한다.
+def matches_exclude_keyword(text: str) -> list:
+    """텍스트에 EXCLUDE_KEYWORDS 중 하나라도 있으면 매칭된 키워드 목록을 반환한다(없으면 빈 리스트).
+    '설치'/'홍보'처럼 범용적인 단어가 본문 어딘가에 우연히 한 번 등장하는 것만으로 무관한 공고까지
+    오탐 제외될 위험은 있지만, 이미 키워드+발주기관+업종/지역 조건을 다 통과한 소수의 최종 후보
+    (그리고 어차피 업종코드/확인서 확인을 위해 이미 열어보는 첨부파일)에만 적용되므로 감내할 수준으로
+    본다."""
+    upper = (text or "").upper()
+    return [kw for kw in EXCLUDE_KEYWORDS if kw.upper() in upper]
 
 
 def find_industry_codes(text: str, window: int = 400) -> set:

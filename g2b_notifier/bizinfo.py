@@ -24,7 +24,7 @@ from .classify import (
     passes_deadline_gate,
 )
 from .config import BIZINFO_API_URL, BIZINFO_SERVICE_KEY, NATIONWIDE_OVERRIDE_KEYWORDS, NON_METRO_REGION_ORGS
-from .doc_extract import extract_document_text
+from .doc_extract import extract_document_text, matches_exclude_keyword
 from .doc_extract import requires_ineligible_certificate as _doc_requires_ineligible_certificate
 from .g2b import COLLECTION_WARNINGS, get_lookback_range, get_with_retry
 
@@ -274,6 +274,15 @@ def get_daily_relevant_bizinfo(start_date=None, end_date=None):
         if is_region_restricted_by_attachment(texts):
             continue
         if requires_ineligible_certificate(texts):
+            continue
+        # 2026-09-22 피드백: 공고명(pblancNm)만으로는 실제 사업 내용을 알 수 없는 경우가 있어
+        # (나라장터 사전규격 R26BD00276858 사례 — API 제목 필드만 봐서는 행사운영 용역인 걸 몰랐음)
+        # 이미 열어본 첨부 공고문 본문에서도 EXCLUDE_KEYWORDS를 재확인한다.
+        exclude_hits = set()
+        for text in texts:
+            exclude_hits.update(matches_exclude_keyword(text))
+        if exclude_hits:
+            print(f"  [제외] 첨부파일 본문에서 제외 키워드 {sorted(exclude_hits)} 확인 -> 배제")
             continue
         item.pop("_attachment_urls", None)
         still_relevant.append(item)

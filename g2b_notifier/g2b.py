@@ -29,7 +29,12 @@ from .config import (
     PRE_SPEC_LIST_OPERATION,
     SERVICE_KEY,
 )
-from .doc_extract import extract_document_text, find_industry_codes, requires_ineligible_certificate
+from .doc_extract import (
+    extract_document_text,
+    find_industry_codes,
+    matches_exclude_keyword,
+    requires_ineligible_certificate,
+)
 
 LICENSE_LIMIT_OPERATION = "getBidPblancListInfoLicenseLimit"
 PRTCPT_PSBL_RGN_OPERATION = "getBidPblancListInfoPrtcptPsblRgn"
@@ -358,16 +363,20 @@ def _fetch_attachment(url: str):
 
 def resolve_prespec_attachments(spec_urls: list):
     """사전규격 첨부파일(specDocFileUrl1~5)을 한 번씩만 내려받아, (1) '과업지시서'류로 이어줄 링크,
-    (2) 문서 본문에서 찾은 우리 보유 업종코드 교집합, (3) 소상공인/중소기업 확인서 요구 여부를 함께
-    반환한다. 세 판정이 같은 다운로드를 재사용하도록 묶어서, 건당 최대 5번인 요청 횟수가 늘지 않게 한다.
-    반환값: (best_url: str, matched_industry_codes: set, restricted: bool). 최종 필터를 통과한
-    소수 건에만 호출한다.
+    (2) 문서 본문에서 찾은 우리 보유 업종코드 교집합, (3) 소상공인/중소기업 확인서 요구 여부,
+    (4) 제외 키워드(EXCLUDE_KEYWORDS) 매칭 여부를 함께 반환한다. 네 판정이 같은 다운로드를
+    재사용하도록 묶어서, 건당 최대 5번인 요청 횟수가 늘지 않게 한다.
+    반환값: (best_url: str, matched_industry_codes: set, restricted: bool, exclude_hits: list).
+    최종 필터를 통과한 소수 건에만 호출한다.
     2026-09-22 피드백: 사전규격 R26BD00276775(한동대학교 산학협력단) 과업지시서에 "중·소기업·
     소상공인 확인서"를 소지한 자만 참가 가능하다고 명시돼 있었는데, 이런 기업규모 제한은 API 어디에도
-    필드로 노출되지 않고 첨부문서 원문에만 있어 직접 열어봐야만 확인 가능하다."""
+    필드로 노출되지 않고 첨부문서 원문에만 있어 직접 열어봐야만 확인 가능하다.
+    같은 날 R26BD00276858(고려대 ANCHOR사업단 "KU Global Tech Career Fair 운영 용역")도 API의
+    title 필드(품명 분류값)만으로는 행사운영 용역임을 알 수 없었는데, 문서 본문엔 EXCLUDE_KEYWORDS에
+    이미 있는 "설치"/"홍보"가 들어있어 첨부문서까지 열어야만 걸러낼 수 있었다."""
     candidates = [u for u in spec_urls if u]
     if not candidates:
-        return "", set(), False
+        return "", set(), False, []
 
     fetched = [(url, *_fetch_attachment(url)) for url in candidates]
 
@@ -383,6 +392,7 @@ def resolve_prespec_attachments(spec_urls: list):
 
     matched_codes = set()
     restricted = False
+    exclude_hits = set()
     for _, filename, raw in fetched:
         if not raw:
             continue
@@ -390,8 +400,9 @@ def resolve_prespec_attachments(spec_urls: list):
         matched_codes |= find_industry_codes(text)
         if requires_ineligible_certificate(text):
             restricted = True
+        exclude_hits.update(matches_exclude_keyword(text))
 
-    return best_url, matched_codes & COMPANY_INDUSTRY_CODES, restricted
+    return best_url, matched_codes & COMPANY_INDUSTRY_CODES, restricted, sorted(exclude_hits)
 
 
 def fetch_pre_specs_for_date_range(start_date=None, end_date=None, page_size: int = 100, max_pages: int = 20):
@@ -614,16 +625,22 @@ def is_negotiated_contract(item: dict) -> bool:
     return (item.get("cntrctCnclsMthdNm") or "") == "수의계약"
 
 
-def bid_requires_ineligible_certificate(item: dict, max_files: int = 3) -> bool:
+def check_bid_attachment_issues(item: dict, max_files: int = 3):
     """입찰공고 첨부파일(ntceSpecDocUrl1~10, 파일명은 ntceSpecFileNm1~10로 API가 바로 알려줘서
-    사전규격과 달리 Content-Disposition 헤더 조회가 필요 없음)을 열어 소상공인/중소기업 확인서를
-    참가자격으로 요구하는지 확인한다. 대부분 앞쪽 1~2개가 실제 공고문/제안요청서라 max_files개까지만
-    시도해 다운로드 비용을 제한한다.
+    사전규격과 달리 Content-Disposition 헤더 조회가 필요 없음)을 열어 (1) 소상공인/중소기업 확인서
+    요구 여부, (2) 제외 키워드(EXCLUDE_KEYWORDS) 매칭 여부를 같은 다운로드로 함께 확인한다.
+    대부분 앞쪽 1~2개가 실제 공고문/제안요청서라 max_files개까지만 시도해 다운로드 비용을 제한한다.
+    반환값: (restricted: bool, exclude_hits: list). restricted가 True면 exclude_hits는 확인하지
+    않고 즉시 반환한다(참가 불가가 이미 확정됐으므로).
 
-    업종제한/지역제한과 달리 이 조건을 나타내는 API 필드가 전혀 없어(2026-09-22 확인: 사전규격
+    업종제한/지역제한과 달리 이 조건들을 나타내는 API 필드가 전혀 없어(2026-09-22 확인: 사전규격
     R26BD00276775 과업지시서에 "중·소기업·소상공인 확인서" 소지자만 참가 가능하다고 명시돼
-    있었는데, 목록 API 어디에도 이를 알려주는 필드가 없었음) 첨부문서를 직접 열어봐야만 판정 가능하다."""
+    있었는데, 목록 API 어디에도 이를 알려주는 필드가 없었음) 첨부문서를 직접 열어봐야만 판정 가능하다.
+    같은 날 R26BD00276858은 API의 title 필드만으로는 실제 내용(행사운영 용역)을 알 수 없었던
+    사례라, bidNtceNm만으로 걸러지지 않는 애매한 건은 첨부문서까지 열어 EXCLUDE_KEYWORDS를
+    재확인해야 한다."""
     checked = 0
+    exclude_hits = set()
     for i in range(1, 11):
         if checked >= max_files:
             break
@@ -636,8 +653,9 @@ def bid_requires_ineligible_certificate(item: dict, max_files: int = 3) -> bool:
             continue
         text = extract_document_text(raw, filename or item.get(f"ntceSpecFileNm{i}", ""))
         if requires_ineligible_certificate(text):
-            return True
-    return False
+            return True, []
+        exclude_hits.update(matches_exclude_keyword(text))
+    return False, sorted(exclude_hits)
 
 
 def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=None):
@@ -678,11 +696,17 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
         if not rgn_ok:
             continue
         # 2026-09-22 추가: 업종제한/지역제한 API 통과 후에도 첨부 공고문에만 소상공인/중소기업
-        # 확인서 요구가 적혀있는 경우가 있어(사전규격과 동일 문제), 전체 수집 시간 상한에 걸리지
-        # 않은 한 마지막으로 확인한다. 확인서 요구가 있으면 다른 조건과 무관하게 참가 불가로 제외.
-        if not _deadline_exceeded() and bid_requires_ineligible_certificate(item):
-            print(f"  [제외] {item.get('bidNtceNo', '')} 소상공인/중소기업 확인서 요구 확인 -> 배제")
-            continue
+        # 확인서 요구나 실제 행사운영 등 EXCLUDE_KEYWORDS 도메인 내용이 적혀있는 경우가 있어
+        # (bidNtceNm만으로는 알 수 없는 사례들 — resolve_prespec_attachments 주석 참고), 전체 수집
+        # 시간 상한에 걸리지 않은 한 마지막으로 확인한다.
+        if not _deadline_exceeded():
+            restricted, exclude_hits = check_bid_attachment_issues(item)
+            if restricted:
+                print(f"  [제외] {item.get('bidNtceNo', '')} 소상공인/중소기업 확인서 요구 확인 -> 배제")
+                continue
+            if exclude_hits:
+                print(f"  [제외] {item.get('bidNtceNo', '')} 첨부문서 본문에서 제외 키워드 {exclude_hits} 확인 -> 배제")
+                continue
         # 2026-09-18 추가: 업종제한사항에서 실제로 우리 보유 코드가 확인된 공고는 대시보드
         # '업종코드 확인' 열에도 사전규격과 동일하게 표시한다.
         item["_industry_codes"] = matched_codes
@@ -756,12 +780,18 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
             item["_industry_codes"] = set()
             final.append(item)
             continue
-        best_url, matched_codes, restricted = resolve_prespec_attachments(spec_urls)
+        best_url, matched_codes, restricted, exclude_hits = resolve_prespec_attachments(spec_urls)
         if restricted:
             # 2026-09-22 피드백: 과업지시서/제안요청서에 "중·소기업·소상공인 확인서" 등 우리가
             # 발급받을 수 없는 확인서를 참가자격으로 요구하면, 키워드/업종코드가 아무리 잘 맞아도
             # 애초에 참가 자체가 불가능하므로 완전히 제외한다(실사례: R26BD00276775).
             print(f"  [제외] {item.get('bidNtceNo', '')} 소상공인/중소기업 확인서 요구 확인 -> 배제")
+            continue
+        if exclude_hits:
+            # 2026-09-22 피드백: API의 title 필드(품명 분류값)만으로는 실제 사업 내용을 알 수 없는
+            # 건이 있어(실사례: R26BD00276858 — 실제로는 "KU Global Tech Career Fair 운영 용역",
+            # 행사 기획·설치·홍보 대행), 첨부문서 본문에서도 EXCLUDE_KEYWORDS를 재확인한다.
+            print(f"  [제외] {item.get('bidNtceNo', '')} 첨부문서 본문에서 제외 키워드 {exclude_hits} 확인 -> 배제")
             continue
         item["bidNtceDtlUrl"] = best_url
         item["_industry_codes"] = matched_codes
