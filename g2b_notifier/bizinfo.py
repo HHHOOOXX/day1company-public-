@@ -15,7 +15,14 @@ from urllib.parse import unquote
 
 import requests
 
-from .classify import _matches_any, attach_confidence, dedupe_latest, is_relevant_bid
+from .classify import (
+    DEADLINE_GATE_DAYS,
+    _matches_any,
+    attach_confidence,
+    dedupe_latest,
+    is_relevant_bid,
+    passes_deadline_gate,
+)
 from .config import BIZINFO_API_URL, BIZINFO_SERVICE_KEY, NATIONWIDE_OVERRIDE_KEYWORDS, NON_METRO_REGION_ORGS
 from .doc_extract import extract_document_text
 from .doc_extract import requires_ineligible_certificate as _doc_requires_ineligible_certificate
@@ -279,5 +286,13 @@ def get_daily_relevant_bizinfo(start_date=None, end_date=None):
     )
 
     attach_confidence(relevant)
+
+    today = datetime.now().date()
+    before_deadline_gate = len(relevant)
+    relevant = [item for item in relevant if passes_deadline_gate(item, today)]
+    print(
+        f"[마감임박필터링] {before_deadline_gate}건 → {len(relevant)}건 "
+        f"(마감 {DEADLINE_GATE_DAYS}일 미만이면서 확실후보(star)가 아닌 건 제외)"
+    )
 
     return relevant

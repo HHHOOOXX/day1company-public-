@@ -9,12 +9,14 @@ from urllib.parse import unquote
 import requests
 
 from .classify import (
+    DEADLINE_GATE_DAYS,
     _matches_any,
     attach_confidence,
     build_learned_keywords,
     dedupe_latest,
     is_relevant_bid,
     is_relevant_prespec,
+    passes_deadline_gate,
 )
 from .config import (
     BASE_URL,
@@ -695,6 +697,14 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
     review_count = sum(1 for item in eligible if item.get("_tier") == "review")
     print(f"[업종/지역필터링] {len(relevant)}건 → {len(eligible)}건 (확인필요 {review_count}건 포함해서 전부 발송)")
 
+    today = datetime.now().date()
+    before_deadline_gate = len(eligible)
+    eligible = [item for item in eligible if passes_deadline_gate(item, today)]
+    print(
+        f"[마감임박필터링] {before_deadline_gate}건 → {len(eligible)}건 "
+        f"(마감 {DEADLINE_GATE_DAYS}일 미만이면서 확실후보(star)가 아닌 건 제외)"
+    )
+
     return eligible
 
 
@@ -761,5 +771,11 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
             item["_tier"] = "include"
             item["_reasons"] = []
         final.append(item)
+
+    # 2026-09-22 피드백: 마감임박 게이트(passes_deadline_gate)는 여기 적용하지 않는다. 사전규격의
+    # "마감"(opninRgstClseDt)은 실제 입찰 참가 마감이 아니라 규격서 의견등록 기간일 뿐이고, 실제
+    # 검증해보니 사전규격 91%(209/230건, 중앙값 4일)가 애초에 7일 미만이라 그대로 적용하면 사전규격
+    # 알림이 사실상 전부 막힌다. 진짜 입찰공고는 나중에 별도 마감으로 다시 뜨므로, 여기서는 게이트를
+    # 건너뛴다 — 마감임박 필터는 입찰공고(get_daily_relevant_bids)/기업마당에서만 적용한다.
 
     return final

@@ -12,6 +12,13 @@ from .config import (
     WEAK_EDU_KEYWORDS,
     WIN_HISTORY,
 )
+from .slack import deadline_date
+
+# 2026-09-22 피드백: 마감까지 7일 미만으로 급박하게 남은 건은 실무자가 검토할 시간이 부족해
+# 원칙적으로 보내지 않는다. 예외는 딱 하나 — 과거 실제 수주 이력과 발주기관이 겹치는 ⭐확실후보
+# (is_confident_win)이면서, 업종/지역/제외키워드/확신도 판정까지 전부 깨끗하게 통과한
+# (_tier == "include", 즉 review 사유가 하나도 없는) 90% 이상 확신할 수 있는 사업만 예외적으로 통과.
+DEADLINE_GATE_DAYS = 7
 
 
 def _matches_any(text: str, keywords) -> bool:
@@ -193,6 +200,21 @@ def attach_confidence(items: list) -> list:
             item["_tier"] = result["tier"]
             item["_reasons"] = result["reasons"]
     return items
+
+
+def passes_deadline_gate(item: dict, today) -> bool:
+    """마감(입찰마감/의견마감/신청마감)까지 DEADLINE_GATE_DAYS일 미만으로 남은 공고는 원칙적으로
+    걸러낸다. attach_confidence가 먼저 _star/_tier를 채워둔 뒤에 호출해야 한다.
+    예외: ⭐확실후보(_star, 과거 실제 수주 기관과 겹침)이면서 _tier == 'include'(업종/지역/제외키워드/
+    확신도 판정까지 전부 깨끗하게 통과해 review 사유가 하나도 없는) 90% 이상 확신할 수 있는 건만
+    마감 임박에도 통과시킨다. 마감일을 파싱할 수 없는 항목(미정 등)은 판단 근거가 없어 차단하지 않는다."""
+    d = deadline_date(item)
+    if d is None:
+        return True
+    days_left = (d - today).days
+    if days_left >= DEADLINE_GATE_DAYS:
+        return True
+    return bool(item.get("_star")) and item.get("_tier") == "include"
 
 
 def tag_business_area(title: str) -> list:
