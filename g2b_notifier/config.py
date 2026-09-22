@@ -17,7 +17,7 @@ _raw_key = os.getenv("G2B_SERVICE_KEY", "")
 # Encoding형/Decoding형 어느 쪽이 들어와도 동일하게 동작하도록 정규화
 SERVICE_KEY = unquote(_raw_key) if _raw_key else ""
 
-# ALIO(공공기관 알리오), 기업마당(bizinfo) 서비스키는 아직 발급 전이라 없어도 됨 (discover 모드만 동작)
+# ALIO(공공기관 알리오)는 활용신청 승인됨(2026-09-15, alio.py 참고), 없어도 discover 모드만 동작
 ALIO_SERVICE_KEY = os.getenv("ALIO_SERVICE_KEY")
 BIZINFO_SERVICE_KEY = os.getenv("BIZINFO_SERVICE_KEY")
 
@@ -38,9 +38,13 @@ PRE_SPEC_LIST_OPERATION = "getPublicPrcureThngInfoServc"  # 사전규격 용역 
 # 기업마당(중소기업 지원사업 통합공고) - crtfcKey 발급 후 사용
 BIZINFO_API_URL = "https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do"
 
-# ALIO(공공기관 경영정보 공개시스템) - opendata.alio.go.kr 활용신청 승인 화면에서 확인한 End Point
-ALIO_PUBLIC_INST_URL = "https://opendata.alio.go.kr/v1/publicinst/list.do"  # 기관정보
-ALIO_BUSINESS_URL = "https://opendata.alio.go.kr/v1/business/list.do"  # 사업정보
+# ALIO(공공기관 경영정보 공개시스템). 2026-09-22: 로그인 후 opendata.alio.go.kr의 Swagger 형태
+# "오픈API 활용명세" 페이지(오픈API 활용신청 > 기관정보/사업정보 상세)에서 실제 스펙을 직접 확인해
+# 이전에 추정했던 값(경로 앞 /new 누락, GET 사용)이 둘 다 틀렸었단 걸 확정했다.
+# 실제 스펙: POST, 파라미터는 전부 쿼리스트링(serviceKey/pageNo/numOfRows/resultType 등 소문자 camelCase),
+# 응답도 다른 서비스들의 response.header/body.items 구조가 아니라 최상위 result/resultCode/totalCount.
+ALIO_PUBLIC_INST_URL = "https://opendata.alio.go.kr/new/v1/publicinst/list.do"  # 기관정보
+ALIO_BUSINESS_URL = "https://opendata.alio.go.kr/new/v1/business/list.do"  # 사업정보
 
 # 2026-09-18: 슬랙 메시지엔 핵심 공고 몇 건만 보내고, 전체 목록은 대시보드(AX사업기획실 공고목록)
 # 링크로 안내한다. 호스팅 방식이 아직 결정되지 않아 기본값은 빈 문자열 — 값이 없으면 슬랙 메시지에
