@@ -625,37 +625,40 @@ def is_negotiated_contract(item: dict) -> bool:
     return (item.get("cntrctCnclsMthdNm") or "") == "수의계약"
 
 
-def check_bid_attachment_issues(item: dict, max_files: int = 3):
+def check_bid_attachment_issues(item: dict):
     """입찰공고 첨부파일(ntceSpecDocUrl1~10, 파일명은 ntceSpecFileNm1~10로 API가 바로 알려줘서
-    사전규격과 달리 Content-Disposition 헤더 조회가 필요 없음)을 열어 (1) 소상공인/중소기업 확인서
-    요구 여부, (2) 제외 키워드(EXCLUDE_KEYWORDS) 매칭 여부를 같은 다운로드로 함께 확인한다.
-    대부분 앞쪽 1~2개가 실제 공고문/제안요청서라 max_files개까지만 시도해 다운로드 비용을 제한한다.
-    반환값: (restricted: bool, exclude_hits: list). restricted가 True면 exclude_hits는 확인하지
-    않고 즉시 반환한다(참가 불가가 이미 확정됐으므로).
+    사전규격과 달리 Content-Disposition 헤더 조회가 필요 없음) 전부를 열어 (1) 소상공인/중소기업
+    확인서 요구 여부, (2) 제외 키워드(EXCLUDE_KEYWORDS) 매칭 여부, (3) 문서 본문에서 찾은 우리 보유
+    업종코드를 같은 다운로드로 함께 확인한다.
+    2026-09-22 피드백 이전엔 앞쪽 max_files=3개만 열어봤는데, 실사례(R26BK01729268 — 부산동성초등학교,
+    첨부파일 6개 중 참가자격이 적힌 "[공고문]"이 6번째)로 뒤쪽 첨부파일에 핵심 정보가 있을 수 있다는
+    게 확인돼 전부 열어보도록 바꿨다. 반환값: (restricted: bool, exclude_hits: list, matched_codes: set).
+    restricted가 True면 나머지는 빈 값으로 즉시 반환한다(참가 불가가 이미 확정됐으므로).
 
-    업종제한/지역제한과 달리 이 조건들을 나타내는 API 필드가 전혀 없어(2026-09-22 확인: 사전규격
+    업종제한/지역제한은 getBidPblancListInfoLicenseLimit/PrtcptPsblRgn으로 공고별 공식 API 조회가
+    이미 별도로 이뤄지므로(check_induty_eligibility/check_region_eligibility), 여기서 찾는 업종코드는
+    그 공식 판정을 보강하는 정보용 교집합일 뿐 별도 하드 제외 기준으로 쓰지 않는다. 반면 소상공인/
+    중소기업 확인서 요구는 이 조건을 나타내는 API 필드가 전혀 없어(2026-09-22 확인: 사전규격
     R26BD00276775 과업지시서에 "중·소기업·소상공인 확인서" 소지자만 참가 가능하다고 명시돼
     있었는데, 목록 API 어디에도 이를 알려주는 필드가 없었음) 첨부문서를 직접 열어봐야만 판정 가능하다.
     같은 날 R26BD00276858은 API의 title 필드만으로는 실제 내용(행사운영 용역)을 알 수 없었던
     사례라, bidNtceNm만으로 걸러지지 않는 애매한 건은 첨부문서까지 열어 EXCLUDE_KEYWORDS를
     재확인해야 한다."""
-    checked = 0
     exclude_hits = set()
+    matched_codes = set()
     for i in range(1, 11):
-        if checked >= max_files:
-            break
         url = item.get(f"ntceSpecDocUrl{i}", "")
         if not url:
             continue
         filename, raw = _fetch_attachment(url)
-        checked += 1
         if not raw:
             continue
         text = extract_document_text(raw, filename or item.get(f"ntceSpecFileNm{i}", ""))
         if requires_ineligible_certificate(text):
-            return True, []
+            return True, [], set()
         exclude_hits.update(matches_exclude_keyword(text))
-    return False, sorted(exclude_hits)
+        matched_codes.update(find_industry_codes(text))
+    return False, sorted(exclude_hits), matched_codes & COMPANY_INDUSTRY_CODES
 
 
 def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=None, alio_orgs=None):
@@ -700,8 +703,9 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
         # 확인서 요구나 실제 행사운영 등 EXCLUDE_KEYWORDS 도메인 내용이 적혀있는 경우가 있어
         # (bidNtceNm만으로는 알 수 없는 사례들 — resolve_prespec_attachments 주석 참고), 전체 수집
         # 시간 상한에 걸리지 않은 한 마지막으로 확인한다.
+        doc_matched_codes = set()
         if not _deadline_exceeded():
-            restricted, exclude_hits = check_bid_attachment_issues(item)
+            restricted, exclude_hits, doc_matched_codes = check_bid_attachment_issues(item)
             if restricted:
                 print(f"  [제외] {item.get('bidNtceNo', '')} 소상공인/중소기업 확인서 요구 확인 -> 배제")
                 continue
@@ -709,8 +713,11 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
                 print(f"  [제외] {item.get('bidNtceNo', '')} 첨부문서 본문에서 제외 키워드 {exclude_hits} 확인 -> 배제")
                 continue
         # 2026-09-18 추가: 업종제한사항에서 실제로 우리 보유 코드가 확인된 공고는 대시보드
-        # '업종코드 확인' 열에도 사전규격과 동일하게 표시한다.
-        item["_industry_codes"] = matched_codes
+        # '업종코드 확인' 열에도 사전규격과 동일하게 표시한다. API 기반 판정(matched_codes)과
+        # 첨부문서 본문 스캔 결과(doc_matched_codes)를 합쳐서 보여준다 — 업종제한 하드 제외 여부는
+        # 이미 check_induty_eligibility(공식 API)가 확정했으므로, 문서 스캔 결과는 정보 보강용일 뿐
+        # 별도 하드 제외 기준으로 쓰지 않는다.
+        item["_industry_codes"] = matched_codes | doc_matched_codes
         if not ind_certain:
             item["_tier"] = "review"
             item["_reasons"].append("업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요")
