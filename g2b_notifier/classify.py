@@ -10,6 +10,7 @@ from .config import (
     EXCLUDE_PROCUREMENT_CATEGORIES,
     ORG_KEYWORDS,
     ORG_KEYWORDS_BROAD,
+    PROPOSAL_HISTORY,
     WEAK_EDU_KEYWORDS,
     WIN_HISTORY,
 )
@@ -99,14 +100,34 @@ def is_relevant_bid(item: dict, alio_orgs: set = None) -> bool:
     """우리팀(교육회사, 대학교/지자체/공공기관 대상) 기준 관심 공고 여부.
     키워드만으로는 노이즈가 많아서, 발주기관 매칭과 결합될 때만 인정한다.
     단, 제목에 축제/행사 대행성 키워드가 있거나 공식 업종 대분류가 구조적으로 무관하면
-    다른 조건과 무관하게 제외한다."""
+    다른 조건과 무관하게 제외한다.
+    2026-09-22 피드백: 과거 제안서를 제출했던 기관(PROPOSAL_HISTORY)의 신규 공고는, 키워드/발주기관
+    조건을 다 만족하지 못해도(예: ORG_KEYWORDS에 없는 발주처 유형) 일단 통과시킨다 — 이미 관계가
+    있는 기관이라 놓치면 안 되므로. 확신도는 낮게(review) 매겨지고 classify_confidence에서 사유가 붙는다."""
     title = item.get("bidNtceNm", "")
     org = item.get("ntceInsttNm", "")
     if _matches_any(title, EXCLUDE_KEYWORDS):
         return False
     if item.get("pubPrcrmntLrgClsfcNm", "") in EXCLUDE_PROCUREMENT_CATEGORIES:
         return False
+    if is_prior_proposal(item)[0]:
+        return True
     return _keyword_confidence(title) != "none" and _org_confidence(org, alio_orgs) != "none"
+
+
+def is_prior_proposal(item: dict):
+    """발주기관명이 우리가 과거 제안서를 제출했던 이력(PROPOSAL_HISTORY)의 기관명과 겹치는지
+    확인한다. WIN_HISTORY(is_confident_win, 실제 수주 확정)와 달리 결과가 아직 안 나온 단계라
+    ⭐확실후보로 강제 include하지 않고 is_relevant_bid의 통과 조건 완화 + review 사유 표시에만 쓴다.
+    양방향 부분일치는 is_confident_win과 동일한 이유(발주기관명에 소속이 덧붙는 경우가 많음)."""
+    org = (item.get("ntceInsttNm", "") or "").upper()
+    if not org:
+        return False, None
+    for entry in PROPOSAL_HISTORY:
+        ref_org = entry["org"].upper()
+        if ref_org in org or org in ref_org:
+            return True, entry
+    return False, None
 
 
 def is_confident_win(item: dict):
@@ -185,15 +206,20 @@ def classify_confidence(item: dict, alio_orgs: set = None) -> dict:
         않은 유형이면 'broad' → review (실제 사업 대상인지 직접 확인 필요).
       - 제목이 '운영'/'위탁운영'/'교육'처럼 범용 동사성 단어 하나로만 매칭되고 다른 구체적 신호(양성/부트캠프/
         콘텐츠/AI 등)가 없으면 'weak' → review (예: 단순 "OO 시스템 운영 용역"은 교육 사업이 아닐 수 있음).
+      - 발주기관이 ORG_KEYWORDS/ALIO 어느 쪽으로도 안 걸리는('none') 유형인데 과거 제안서를 제출했던
+        기관(PROPOSAL_HISTORY)이라 is_relevant_bid를 통과한 경우 → review (실제 후속사업인지 확인 필요).
     """
     title = item.get("bidNtceNm", "")
     org = item.get("ntceInsttNm", "")
     org_conf = _org_confidence(org, alio_orgs)
     kw_conf = _keyword_confidence(title)
+    proposed, proposal_entry = is_prior_proposal(item)
 
     reasons = []
     if org_conf == "broad":
         reasons.append("발주기관 유형이 대학교/지자체 핵심군이 아님(공사/공단/협회/연구원 등) — 실제 사업 대상인지 확인 필요")
+    elif org_conf == "none" and proposed:
+        reasons.append(f"과거 제안서를 제출했던 기관({proposal_entry['org']})의 신규 공고 — 실제 후속사업인지 확인 필요")
     if kw_conf == "weak":
         reasons.append("제목이 '운영/교육/AI' 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요")
     elif kw_conf == "none":
