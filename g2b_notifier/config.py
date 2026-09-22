@@ -51,10 +51,10 @@ ALIO_BUSINESS_URL = "https://opendata.alio.go.kr/new/v1/business/list.do"  # 사
 # 링크 블록 자체를 넣지 않는다. 호스팅이 정해지면 .env/시크릿에 DASHBOARD_URL만 추가하면 된다.
 DASHBOARD_URL = os.getenv("DASHBOARD_URL", "").strip()
 
-# 2026-09-22 피드백: 메시지 첫 줄 멘션을 전체 채널(<!channel>)이 아니라 특정 사용자그룹(@ax-gov 등)
-# 으로 좁히고 싶다는 요청. Slack에서 사용자그룹 멘션이 실제로 알림을 보내려면 그룹명 텍스트가 아니라
-# 내부 그룹 ID가 필요하다(형식: <!subteam^그룹ID|@표시이름>) — .env에 SLACK_MENTION으로 그 문자열을
-# 그대로 넣으면 된다. 아직 ID를 확인 전이라 기본값은 기존과 동일한 전체 채널 멘션으로 둔다.
+# 2026-09-22: 특정 사용자그룹(@ax-gov 등) 멘션으로 좁히려면 Slack 내부 그룹 ID가 필요한데
+# (형식: <!subteam^그룹ID|@표시이름>) admin/user_groups 접근권한이 없어 ID를 확인할 수 없었다.
+# 그래서 전체 채널 멘션(<!channel>)을 계속 쓰기로 함. 나중에 권한이 생기면 .env에 SLACK_MENTION으로
+# 그 문자열을 넣으면 된다.
 SLACK_MENTION = os.getenv("SLACK_MENTION", "<!channel>").strip() or "<!channel>"
 
 # 우리팀(교육회사, 대학교/지자체 대상 교육·양성사업) 필터링용 키워드 후보.
