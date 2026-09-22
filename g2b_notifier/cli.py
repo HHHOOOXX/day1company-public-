@@ -285,6 +285,14 @@ def _require_g2b_key():
 
 
 def main():
+    # 2026-09-22: Windows 콘솔/파일 리다이렉트 환경은 기본 인코딩이 cp949라, 슬랙 메시지 본문이나
+    # 로그에 들어있는 이모지(⚠️ 등)를 print()하는 순간 UnicodeEncodeError로 전체 실행이 죽는다.
+    # GitHub Actions(ubuntu-latest)는 기본이 UTF-8이라 원래 안 겪는 문제지만, 로컬에서 디버깅/테스트
+    # 할 때마다 이 크래시를 만나 — stdout/stderr를 UTF-8로 강제 재설정해 근본적으로 막는다.
+    if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     if len(sys.argv) > 1 and sys.argv[1] == "notify":
         _require_g2b_key()
         args = sys.argv[2:]
