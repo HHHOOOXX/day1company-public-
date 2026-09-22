@@ -146,15 +146,17 @@ def format_star_reminder(star_postings: list, today) -> str:
     return "\n".join(lines)
 
 
-def format_urgent_digest(entries: list, today, top_n: int = 8) -> str:
+def format_urgent_digest(entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP") -> str:
     """세 소스를 합쳐 마감이 가장 급한 순으로 top_n개만 뽑은 요약 섹션.
-    entries: [(source_tag, label, item), ...] — 소스마다 마감 필드 라벨(마감/의견마감/신청)이 다르므로 같이 받는다."""
+    entries: [(source_tag, label, item), ...] — 소스마다 마감 필드 라벨(마감/의견마감/신청)이 다르므로 같이 받는다.
+    title: 헤더 앞부분 텍스트 — 확실포함용 "🔥 마감임박 TOP"과 확인필요 참고용 섹션을 같은 카드 포맷으로
+    재사용하되 성격이 다르다는 걸 헤더로 구분하기 위함(2026-09-22)."""
     dated = [(deadline_date(item), tag, label, item) for tag, label, item in entries]
     dated = [d for d in dated if d[0] is not None and d[0] >= today]
     dated.sort(key=lambda d: d[0])
     top = dated[:top_n]
 
-    header = f"*\U0001F525 마감임박 TOP {len(top)} (전체 {len(entries)}건 중 오늘 기준 가장 급한 것부터)*"
+    header = f"*{title} {len(top)} (전체 {len(entries)}건 중 오늘 기준 가장 급한 것부터)*"
     if not top:
         return f"{header}\n마감일이 확인되는 공고가 없어 생략합니다."
 
@@ -204,12 +206,13 @@ def _urgency_emoji(delta) -> str:
     return "\U0001F7E2"  # 🟢
 
 
-def format_urgent_blocks(entries: list, today, top_n: int = 8) -> list:
+def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP") -> list:
     """마감임박 TOP N을 Block Kit 카드(기관/구분/예산/계약방법/마감/적합성 필드)로 만든다.
     entries: [(source_tag, label, item), ...]. Block 개수가 한정적이어야 해서(Slack 메시지당 50개 제한)
     이 카드형 레이아웃은 TOP N에만 쓰고, 전체 리스트는 기존 압축 텍스트(chunk_mrkdwn_blocks)로 보낸다.
     2026-09-18 가독성 개선: 마감 임박도를 신호등 이모지로, 수치성 정보(예산/계약방법/마감)는 코드
-    서식(`)으로 감싸서 한눈에 훑기 쉽게 만들었다."""
+    서식(`)으로 감싸서 한눈에 훑기 쉽게 만들었다.
+    title: 헤더 앞부분 텍스트(format_urgent_digest와 동일한 이유로 파라미터화, 2026-09-22)."""
     dated = [(deadline_date(item), tag, label, item) for tag, label, item in entries]
     dated = [d for d in dated if d[0] is not None and d[0] >= today]
     dated.sort(key=lambda d: d[0])
@@ -218,7 +221,7 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8) -> list:
     blocks = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": f"\U0001F525 마감임박 TOP {len(top)} (전체 {len(entries)}건 중)", "emoji": True},
+            "text": {"type": "plain_text", "text": f"{title} {len(top)} (전체 {len(entries)}건 중)", "emoji": True},
         }
     ]
 
