@@ -304,7 +304,25 @@ def fetch_bids_for_date_range(category: str = "용역", start_date=None, end_dat
     else:
         print(f"[요청] {category} / {start_date.isoformat()} ~ {end_date.isoformat()} 공고 (주말 포함 구간)")
 
-    return _fetch_paginated(operation, begin_str, end_str, page_size, max_pages)
+    items = _fetch_paginated(operation, begin_str, end_str, page_size, max_pages)
+    for item in items:
+        _normalize_bid_org(item)
+    return items
+
+
+def _normalize_bid_org(item: dict) -> None:
+    """ntceInsttNm(공고기관)을 실제 발주기관 판별에 쓸 수 있게 제자리에서 정리한다.
+    조달청이 여러 중앙부처/산하기관의 입찰을 대행 공고하는 경우가 많아(예: 공고기관은 "조달청",
+    실제 수요기관은 "한국교육학술정보원"), ntceInsttNm만 보면 "조달청"이라는 이유만으로(CENTRAL_GOV_ORGS라
+    무조건 core 판정) 실제로는 전혀 무관한 기관의 공고까지 관심 공고로 잘못 분류되는 문제가 있었다
+    (2026-09-22 실사례: R26BK01739019 — 조달청이 대행 공고했지만 실제로는 한국교육학술정보원의
+    해외연수 여행사 선정 건, R26BK01734308 — 한국고용노동교육원 구내식당 운영 위탁).
+    dminsttNm(수요기관, 실제 사업 주체)이 있으면 그걸 발주기관으로 대신 쓴다 — 위임 없이 직접 공고한
+    경우(예: OO대학교가 직접 공고)는 ntceInsttNm과 dminsttNm이 대부분 동일해서 결과가 바뀌지 않는다.
+    사전규격(_normalize_pre_spec)이 rlDminsttNm을 우선하는 것과 같은 원리다."""
+    dminstt = item.get("dminsttNm", "")
+    if dminstt:
+        item["ntceInsttNm"] = dminstt
 
 
 def _normalize_pre_spec(item: dict) -> dict:

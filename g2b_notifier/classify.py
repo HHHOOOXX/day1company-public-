@@ -7,6 +7,7 @@ from .config import (
     CENTRAL_GOV_ORGS,
     EDU_KEYWORDS,
     EXCLUDE_KEYWORDS,
+    EXCLUDE_PROCUREMENT_CATEGORIES,
     ORG_KEYWORDS,
     ORG_KEYWORDS_BROAD,
     WEAK_EDU_KEYWORDS,
@@ -97,10 +98,13 @@ def _keyword_confidence(title: str) -> str:
 def is_relevant_bid(item: dict, alio_orgs: set = None) -> bool:
     """우리팀(교육회사, 대학교/지자체/공공기관 대상) 기준 관심 공고 여부.
     키워드만으로는 노이즈가 많아서, 발주기관 매칭과 결합될 때만 인정한다.
-    단, 제목에 축제/행사 대행성 키워드가 있으면 다른 조건과 무관하게 제외한다."""
+    단, 제목에 축제/행사 대행성 키워드가 있거나 공식 업종 대분류가 구조적으로 무관하면
+    다른 조건과 무관하게 제외한다."""
     title = item.get("bidNtceNm", "")
     org = item.get("ntceInsttNm", "")
     if _matches_any(title, EXCLUDE_KEYWORDS):
+        return False
+    if item.get("pubPrcrmntLrgClsfcNm", "") in EXCLUDE_PROCUREMENT_CATEGORIES:
         return False
     return _keyword_confidence(title) != "none" and _org_confidence(org, alio_orgs) != "none"
 
