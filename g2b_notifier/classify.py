@@ -51,12 +51,30 @@ def dedupe_latest(items: list) -> list:
     return [entry[1] for entry in latest_by_no.values()]
 
 
-def _org_confidence(org: str) -> str:
+def _matches_alio_org(org: str, alio_orgs: set) -> bool:
+    """발주기관명이 ALIO 공공기관 마스터 리스트(alio.fetch_alio_org_names)의 기관명과 겹치는지
+    양방향 부분일치로 확인한다(WIN_HISTORY 매칭과 동일한 방식 — 나라장터 발주기관명은
+    "OO공단 OO지사"처럼 소속이 덧붙는 경우가 많아서다). alio_orgs가 비어있으면(API 미사용/실패)
+    항상 False — 화이트리스트가 없으면 이 신호 없이 기존 ORG_KEYWORDS 판정만 쓴다."""
+    if not org or not alio_orgs:
+        return False
+    org_upper = org.upper()
+    for name in alio_orgs:
+        name_upper = name.upper()
+        if name_upper and (name_upper in org_upper or org_upper in name_upper):
+            return True
+    return False
+
+
+def _org_confidence(org: str, alio_orgs: set = None) -> str:
     """발주기관명 신뢰도.
-    'core': 대학교/지자체/중앙부처 등 핵심 유형이거나, 과거 수주 실적으로 유효성이 확인된 유형(ORG_KEYWORDS).
-    'broad': 공공기관 성격은 있으나 수주 실적으로 아직 확인되지 않은 유형(ORG_KEYWORDS_BROAD).
-    'none': 둘 다 아님."""
+    'core': 대학교/지자체/중앙부처 등 핵심 유형이거나, 과거 수주 실적으로 유효성이 확인된 유형(ORG_KEYWORDS),
+    또는 ALIO 공공기관 마스터 리스트와 정확히 매칭되는 실제 지정 공공기관(2026-09-22 연동).
+    'broad': 공공기관 성격은 있으나(ORG_KEYWORDS_BROAD 매칭) ALIO로도 확인되지 않는 유형.
+    'none': 셋 다 아님."""
     if _matches_any(org, ORG_KEYWORDS) or _matches_any(org, CENTRAL_GOV_ORGS):
+        return "core"
+    if _matches_alio_org(org, alio_orgs):
         return "core"
     if _matches_any(org, ORG_KEYWORDS_BROAD):
         return "broad"
@@ -76,7 +94,7 @@ def _keyword_confidence(title: str) -> str:
     return "strong"
 
 
-def is_relevant_bid(item: dict) -> bool:
+def is_relevant_bid(item: dict, alio_orgs: set = None) -> bool:
     """우리팀(교육회사, 대학교/지자체/공공기관 대상) 기준 관심 공고 여부.
     키워드만으로는 노이즈가 많아서, 발주기관 매칭과 결합될 때만 인정한다.
     단, 제목에 축제/행사 대행성 키워드가 있으면 다른 조건과 무관하게 제외한다."""
@@ -84,7 +102,7 @@ def is_relevant_bid(item: dict) -> bool:
     org = item.get("ntceInsttNm", "")
     if _matches_any(title, EXCLUDE_KEYWORDS):
         return False
-    return _keyword_confidence(title) != "none" and _org_confidence(org) != "none"
+    return _keyword_confidence(title) != "none" and _org_confidence(org, alio_orgs) != "none"
 
 
 def is_confident_win(item: dict):
@@ -115,7 +133,7 @@ def _extract_tokens(text: str) -> set:
     return {t for t in raw if len(t) >= 2 and t not in _TOKEN_STOPWORDS}
 
 
-def build_learned_keywords(historical_bid_titles_orgs: list) -> set:
+def build_learned_keywords(historical_bid_titles_orgs: list, alio_orgs: set = None) -> set:
     """사전규격 전용 '학습된 키워드' 집합을 만든다. 사전규격은 업종제한/지역제한 API 자체가 없어서
     (getBidPblancListInfoLicenseLimit/PrtcptPsblRgn이 사전규격 서비스엔 존재하지 않음 — 실제 호출로 확인)
     입찰공고보다 훨씬 좁고 확실한 키워드로만 걸러야 노이즈(전통시장/뷰티 등)가 안 섞인다.
@@ -128,7 +146,7 @@ def build_learned_keywords(historical_bid_titles_orgs: list) -> set:
     historical_bid_titles_orgs: [(title, org), ...] — db.get_historical_bid_titles() 결과."""
     learned = set()
     for title, org in historical_bid_titles_orgs:
-        if _keyword_confidence(title) == "strong" and _org_confidence(org) == "core":
+        if _keyword_confidence(title) == "strong" and _org_confidence(org, alio_orgs) == "core":
             # WEAK_EDU_KEYWORDS('운영'/'교육' 등)는 다른 강한 신호와 같이 있어서 title 자체는
             # strong으로 판정됐더라도, 범용 단어 그 자체를 학습 키워드에 넣으면 사전규격 쪽에서
             # 다시 오탐을 일으키므로 제외한다.
@@ -138,7 +156,7 @@ def build_learned_keywords(historical_bid_titles_orgs: list) -> set:
     return learned
 
 
-def is_relevant_prespec(item: dict, learned_keywords: set) -> bool:
+def is_relevant_prespec(item: dict, learned_keywords: set, alio_orgs: set = None) -> bool:
     """사전규격 전용 관심 공고 판별. is_relevant_bid와 달리 EDU_KEYWORDS 전체가 아니라
     build_learned_keywords로 좁힌 키워드만 쓰고, 발주기관도 핵심군(core)만 인정한다 — 사전규격은
     업종/지역 API로 걸러낼 안전망이 없어서 애초에 더 엄격한 기준으로 들어오는 것 자체를 좁혀야 한다."""
@@ -148,24 +166,25 @@ def is_relevant_prespec(item: dict, learned_keywords: set) -> bool:
         return False
     if not learned_keywords:
         return False
-    return _matches_any(title, learned_keywords) and _org_confidence(org) == "core"
+    return _matches_any(title, learned_keywords) and _org_confidence(org, alio_orgs) == "core"
 
 
-def classify_confidence(item: dict) -> dict:
+def classify_confidence(item: dict, alio_orgs: set = None) -> dict:
     """키워드/발주기관 신뢰도만으로 1차 확신도를 매긴다({"tier": "include"|"review", "reasons": [...]}).
     입찰공고의 경우 g2b.get_daily_relevant_bids에서 업종제한 판정 결과가 추가로 반영되어 최종 확정된다.
 
     판단 기준(2026-09-16 데이원 B2G 수주 실적 목록을 근거로 수립):
       - 발주기관이 대학교/지자체/재단/진흥원 등 핵심 유형이거나, 실제 수주 이력이 있는 유형
-        (전문대/고등학교/기술원/진흥센터/거래소 등 ORG_KEYWORDS에 편입된 유형)이면 'core' → include.
-      - '공사/공단/협회/학원/연구원' 등 공공기관 성격은 있으나 수주 이력으로 아직 확인되지 않은 유형이면
-        'broad' → review (실제 사업 대상인지 직접 확인 필요).
+        (전문대/고등학교/기술원/진흥센터/거래소 등 ORG_KEYWORDS에 편입된 유형)이거나, ALIO 공공기관
+        마스터 리스트와 정확히 매칭되는 실제 지정 공공기관(2026-09-22 연동)이면 'core' → include.
+      - '공사/공단/협회/학원/연구원' 등 공공기관 성격은 있으나 수주 이력으로도 ALIO로도 아직 확인되지
+        않은 유형이면 'broad' → review (실제 사업 대상인지 직접 확인 필요).
       - 제목이 '운영'/'위탁운영'/'교육'처럼 범용 동사성 단어 하나로만 매칭되고 다른 구체적 신호(양성/부트캠프/
         콘텐츠/AI 등)가 없으면 'weak' → review (예: 단순 "OO 시스템 운영 용역"은 교육 사업이 아닐 수 있음).
     """
     title = item.get("bidNtceNm", "")
     org = item.get("ntceInsttNm", "")
-    org_conf = _org_confidence(org)
+    org_conf = _org_confidence(org, alio_orgs)
     kw_conf = _keyword_confidence(title)
 
     reasons = []
@@ -184,13 +203,13 @@ def classify_confidence(item: dict) -> dict:
     return {"tier": tier, "reasons": reasons}
 
 
-def attach_confidence(items: list) -> list:
+def attach_confidence(items: list, alio_orgs: set = None) -> list:
     """items 각각에 확신도 판정 결과를 _tier/_reasons/_star 필드로 붙인다(제자리 수정, 리스트 그대로 반환).
     과거 수주 이력(WIN_HISTORY)과 발주기관이 겹치면, 키워드/발주기관 판정이 'review'였더라도
     강제로 'include'로 올리고 _star에 매칭된 과거 프로젝트를 남긴다 — 실제로 우리와 거래한 기관이
     보낸 공고는 확인 필요 등급으로 묻히면 안 되기 때문."""
     for item in items:
-        result = classify_confidence(item)
+        result = classify_confidence(item, alio_orgs)
         won, matched = is_confident_win(item)
         item["_star"] = matched
         if won:

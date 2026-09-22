@@ -23,7 +23,7 @@ from datetime import datetime
 import os
 
 from . import db
-from .alio import fetch_alio_preview
+from .alio import fetch_alio_org_names, fetch_alio_preview
 from .bizinfo import fetch_bizinfo_preview, get_daily_relevant_bizinfo
 from .classify import tag_business_area
 from .config import BIZINFO_SERVICE_KEY, DASHBOARD_URL, REPO_ROOT, SERVICE_KEY
@@ -93,6 +93,20 @@ def _filter_unnotified(conn, source: str, items: list, today_str: str) -> list:
     return fresh
 
 
+def _fetch_alio_orgs() -> set:
+    """ALIO 공공기관 화이트리스트(classify._org_confidence 보강용)를 가져온다.
+    실패해도(서비스키 없음/API 오류) 예외를 전파하지 않고 빈 set을 반환한다 — 화이트리스트는
+    판정을 보강하는 보조 신호일 뿐이라, 이게 없다고 전체 실행이 막히면 안 된다."""
+    try:
+        orgs = fetch_alio_org_names()
+    except Exception as exc:
+        print(f"[경고] ALIO 기관 화이트리스트 수집 중 예외 발생: {exc!r}")
+        COLLECTION_WARNINGS.append(f"ALIO 기관정보: 예외 발생 ({exc.__class__.__name__})")
+        return set()
+    print(f"[ALIO] 화이트리스트 기관 {len(orgs)}개 로드")
+    return orgs
+
+
 def run_daily_notification(
     categories=("용역",), include_pre_spec: bool = True, include_bizinfo: bool = True, quiet_if_empty: bool = False
 ):
@@ -123,8 +137,12 @@ def run_daily_notification(
     all_pairs = []
     COLLECTION_WARNINGS.clear()
 
+    alio_orgs = _fetch_alio_orgs()
+
     try:
-        bids = get_daily_relevant_bids(categories=categories, start_date=start_date, end_date=end_date)
+        bids = get_daily_relevant_bids(
+            categories=categories, start_date=start_date, end_date=end_date, alio_orgs=alio_orgs
+        )
     except Exception as exc:
         print(f"[에러] 나라장터 입찰공고 수집 중 예외 발생: {exc!r}")
         traceback.print_exc()
@@ -142,7 +160,10 @@ def run_daily_notification(
             # 이 시점엔 위에서 이미 오늘자 입찰공고가 upsert돼 있어서, 학습 키워드에 오늘 매칭분까지 반영된다.
             historical_bid_titles_orgs = db.get_historical_bid_titles(conn)
             pre_specs = get_daily_relevant_pre_specs(
-                start_date=start_date, end_date=end_date, historical_bid_titles_orgs=historical_bid_titles_orgs
+                start_date=start_date,
+                end_date=end_date,
+                historical_bid_titles_orgs=historical_bid_titles_orgs,
+                alio_orgs=alio_orgs,
             )
         except Exception as exc:
             print(f"[에러] 나라장터 사전규격 수집 중 예외 발생: {exc!r}")
@@ -155,7 +176,7 @@ def run_daily_notification(
 
     if include_bizinfo and BIZINFO_SERVICE_KEY:
         try:
-            bizinfo_items = get_daily_relevant_bizinfo(start_date=start_date, end_date=end_date)
+            bizinfo_items = get_daily_relevant_bizinfo(start_date=start_date, end_date=end_date, alio_orgs=alio_orgs)
         except Exception as exc:
             print(f"[에러] 기업마당 수집 중 예외 발생: {exc!r}")
             traceback.print_exc()
@@ -324,13 +345,21 @@ def main():
         preview_conn = db.get_connection()
         historical_bid_titles_orgs = db.get_historical_bid_titles(preview_conn)
         preview_conn.close()
+        alio_orgs = _fetch_alio_orgs()
 
-        bid_items = get_daily_relevant_bids(categories=categories, start_date=start_date, end_date=end_date)
+        bid_items = get_daily_relevant_bids(
+            categories=categories, start_date=start_date, end_date=end_date, alio_orgs=alio_orgs
+        )
         pre_spec_items = get_daily_relevant_pre_specs(
-            start_date=start_date, end_date=end_date, historical_bid_titles_orgs=historical_bid_titles_orgs
+            start_date=start_date,
+            end_date=end_date,
+            historical_bid_titles_orgs=historical_bid_titles_orgs,
+            alio_orgs=alio_orgs,
         )
         bizinfo_items = (
-            get_daily_relevant_bizinfo(start_date=start_date, end_date=end_date) if BIZINFO_SERVICE_KEY else []
+            get_daily_relevant_bizinfo(start_date=start_date, end_date=end_date, alio_orgs=alio_orgs)
+            if BIZINFO_SERVICE_KEY
+            else []
         )
 
         write_and_open_preview(
@@ -341,19 +370,22 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "daily":
         _require_g2b_key()
         categories = sys.argv[2].split(",") if len(sys.argv) > 2 else ["용역"]
-        items = get_daily_relevant_bids(categories=categories)
+        alio_orgs = _fetch_alio_orgs()
+        items = get_daily_relevant_bids(categories=categories, alio_orgs=alio_orgs)
         print_daily_digest(items)
 
         print("\n\n===== 사전규격(용역) =====")
         daily_conn = db.get_connection()
         historical_bid_titles_orgs = db.get_historical_bid_titles(daily_conn)
         daily_conn.close()
-        pre_spec_items = get_daily_relevant_pre_specs(historical_bid_titles_orgs=historical_bid_titles_orgs)
+        pre_spec_items = get_daily_relevant_pre_specs(
+            historical_bid_titles_orgs=historical_bid_titles_orgs, alio_orgs=alio_orgs
+        )
         print_daily_digest(pre_spec_items)
 
         if BIZINFO_SERVICE_KEY:
             print("\n\n===== 기업마당 =====")
-            bizinfo_items = get_daily_relevant_bizinfo()
+            bizinfo_items = get_daily_relevant_bizinfo(alio_orgs=alio_orgs)
             print_daily_digest(bizinfo_items)
         return
 

@@ -658,12 +658,13 @@ def check_bid_attachment_issues(item: dict, max_files: int = 3):
     return False, sorted(exclude_hits)
 
 
-def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=None):
+def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=None, alio_orgs=None):
     """지정 기간(기본값: get_lookback_range() — 월요일은 직전 금요일 하루, 그 외엔 어제 하루) 동안 게시된 공고 중,
     중복 제거 + 우리팀 관심 조건(키워드∩발주기관) + 수의계약/수의시담 제외 + 업종제한(보유 업종코드) +
     지역제한(서울) 조건을 만족하는 공고를 반환한다. 애매하게 판정된 건('review' 등급)도 제외하지 않고
     ⚠️ 태그를 달아 같이 포함시킨다 — 업종/지역 필터가 엄격해질수록 애매한 진짜 기회를 조용히 놓칠 위험이
-    커지기 때문. (매일 지정 시각에 실행되는 슬랙 알림 배치에서 호출할 핵심 함수)"""
+    커지기 때문. (매일 지정 시각에 실행되는 슬랙 알림 배치에서 호출할 핵심 함수)
+    alio_orgs: alio.fetch_alio_org_names() 결과 — 발주기관 화이트리스트 검증용(없으면 ORG_KEYWORDS만 사용)."""
     if start_date is None or end_date is None:
         start_date, end_date = get_lookback_range()
 
@@ -679,13 +680,13 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
     deduped = dedupe_latest(raw_items)
     print(f"[중복제거] {len(raw_items)}건 → {len(deduped)}건 (공고번호 기준 최신 차수만 유지)")
 
-    relevant = [item for item in deduped if is_relevant_bid(item)]
+    relevant = [item for item in deduped if is_relevant_bid(item, alio_orgs)]
     before_nego = len(relevant)
     relevant = [item for item in relevant if not is_negotiated_contract(item)]
     relevant.sort(key=lambda item: item.get("bidNtceDt", ""))
     print(f"[필터링] 키워드 + 발주기관 동시 매칭: {before_nego}건 (수의계약/수의시담 제외 후 {len(relevant)}건)")
 
-    attach_confidence(relevant)
+    attach_confidence(relevant, alio_orgs)
 
     eligible = []
     for item in relevant:
@@ -732,7 +733,7 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
     return eligible
 
 
-def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_titles_orgs=None):
+def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_titles_orgs=None, alio_orgs=None):
     """지정 기간(기본값: get_lookback_range()) 동안 등록된 사전규격(용역) 중,
     중복 제거 + '학습된 키워드' 조건(핵심 발주기관 + 좁혀진 키워드)을 만족하는 건만 반환한다.
 
@@ -744,7 +745,8 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
     명백히 무관한 건이 안 들어오게 하는 게 목표.
 
     통과한 소수의 건에 한해 링크를 규격서 첨부파일 중 '과업지시서'류로 교체한다(resolve_task_order_url).
-    historical_bid_titles_orgs: db.get_historical_bid_titles() 결과. 없으면 WIN_HISTORY만으로 학습."""
+    historical_bid_titles_orgs: db.get_historical_bid_titles() 결과. 없으면 WIN_HISTORY만으로 학습.
+    alio_orgs: alio.fetch_alio_org_names() 결과 — 발주기관 화이트리스트 검증용(없으면 ORG_KEYWORDS만 사용)."""
     if start_date is None or end_date is None:
         start_date, end_date = get_lookback_range()
 
@@ -753,10 +755,10 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
     deduped = dedupe_latest(raw_items)
     print(f"[중복제거] {len(raw_items)}건 → {len(deduped)}건 (사전규격등록번호 기준)")
 
-    learned_keywords = build_learned_keywords(historical_bid_titles_orgs or [])
+    learned_keywords = build_learned_keywords(historical_bid_titles_orgs or [], alio_orgs)
     print(f"[학습] 사전규격 필터링용 키워드 {len(learned_keywords)}개 (과거 확실매칭 입찰공고 + 수주이력 기반)")
 
-    relevant = [item for item in deduped if is_relevant_prespec(item, learned_keywords)]
+    relevant = [item for item in deduped if is_relevant_prespec(item, learned_keywords, alio_orgs)]
     before_attach = len(relevant)
     # 2026-09-18 피드백: 첨부파일이 아예 없어서 과업지시서/규격서 중 어느 것도 링크로 못 거는 건은
     # 발송해도 실무자가 열어볼 자료가 없으므로 제외한다.
@@ -767,7 +769,7 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
         f"(첨부파일 없는 건 제외 후 {len(relevant)}건)"
     )
 
-    attach_confidence(relevant)
+    attach_confidence(relevant, alio_orgs)
 
     final = []
     for item in relevant:

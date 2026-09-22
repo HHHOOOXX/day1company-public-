@@ -249,9 +249,10 @@ def fetch_bizinfo_for_date_range(start_date=None, end_date=None, page_size: int 
     return collected
 
 
-def get_daily_relevant_bizinfo(start_date=None, end_date=None):
+def get_daily_relevant_bizinfo(start_date=None, end_date=None, alio_orgs=None):
     """지정 기간(기본값: get_lookback_range()) 동안 등록된 기업마당 지원사업 공고 중,
-    중복 제거 + 우리팀 관심 조건(키워드∩기관) + 본사 지역 조건을 만족하는 건만 반환한다."""
+    중복 제거 + 우리팀 관심 조건(키워드∩기관) + 본사 지역 조건을 만족하는 건만 반환한다.
+    alio_orgs: alio.fetch_alio_org_names() 결과 — 발주기관 화이트리스트 검증용(없으면 ORG_KEYWORDS만 사용)."""
     if start_date is None or end_date is None:
         start_date, end_date = get_lookback_range()
 
@@ -260,7 +261,7 @@ def get_daily_relevant_bizinfo(start_date=None, end_date=None):
     deduped = dedupe_latest(raw_items)
     print(f"[중복제거] {len(raw_items)}건 → {len(deduped)}건 (공고ID 기준)")
 
-    relevant = [item for item in deduped if is_relevant_bid(item)]
+    relevant = [item for item in deduped if is_relevant_bid(item, alio_orgs)]
     before_region = len(relevant)
     relevant = [item for item in relevant if not is_region_restricted(item)]
     after_summary_region = len(relevant)
@@ -294,7 +295,7 @@ def get_daily_relevant_bizinfo(start_date=None, end_date=None):
         f"(사업개요상 지역제한 제외 {after_summary_region}건 → 첨부파일 확인 후 {len(relevant)}건)"
     )
 
-    attach_confidence(relevant)
+    attach_confidence(relevant, alio_orgs)
 
     today = datetime.now().date()
     before_deadline_gate = len(relevant)

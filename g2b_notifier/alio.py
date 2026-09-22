@@ -1,8 +1,8 @@
 """ALIO(공공기관 경영정보 공개시스템) 공공기관 마스터 리스트.
 
 공기업/준정부기관/기타공공기관(약 355개) 리스트를 받아, 나라장터 필터링의 ntceInsttNm을
-"정확 매칭"으로 한 번 더 검증하는 화이트리스트로 쓰려던 소스다. 자체적으로 공고를
-긁어오는 소스는 아니다.
+"정확 매칭"으로 한 번 더 검증하는 화이트리스트로 쓴다(classify.py에 연동, 2026-09-22). 자체적으로
+공고를 긁어오는 소스는 아니다.
 
 2026-09-15: 활용신청은 승인됐지만, GET + ServiceKey/pageNo/numOfRows(data.go.kr 관례) 조합으로
 호출하면 계속 opendata.alio.go.kr/new 로 302 리다이렉트돼 실제 호출 방식을 확정하지 못했었다.
@@ -64,3 +64,23 @@ def fetch_alio_preview(page_size: int = 10):
         ALIO_PUBLIC_INST_URL, {"pageNo": "1", "numOfRows": str(page_size), "resultType": "json"}
     )
     return {"result": result} if result is not None else None
+
+
+def fetch_alio_org_names(page_size: int = 100, max_pages: int = 10) -> set:
+    """전체 공공기관 명칭(instNm) 집합을 페이지네이션으로 모아서 반환한다.
+    classify.py의 발주기관 화이트리스트 검증(_org_confidence)에 쓰인다.
+    ALIO_SERVICE_KEY가 없거나 API 호출이 실패하면 빈 set을 반환한다 — 화이트리스트는 판정을
+    보강하는 보조 신호일 뿐이라, 이게 비어있다고 전체 수집이 막히면 안 된다(호출부에서 빈 set을
+    "ALIO 미사용"으로 취급해 기존 ORG_KEYWORDS 판정만으로 계속 동작한다)."""
+    names = set()
+    for page in range(1, max_pages + 1):
+        items = _fetch_alio_list(
+            ALIO_PUBLIC_INST_URL, {"pageNo": str(page), "numOfRows": str(page_size), "resultType": "json"}
+        )
+        if not items:
+            break
+        names.update(item.get("instNm", "") for item in items)
+        if len(items) < page_size:
+            break
+    names.discard("")
+    return names
