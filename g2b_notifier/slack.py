@@ -34,14 +34,6 @@ def deadline_date(item: dict):
         return None
 
 
-def _short_date(item: dict) -> str:
-    """마감 필드를 'M/D' 짧은 형태로. 파싱 안 되면 원문(미정 등) 그대로."""
-    d = deadline_date(item)
-    if d is not None:
-        return f"{d.month}/{d.day}"
-    return (item.get("bidClseDt") or "미정") or "미정"
-
-
 def dday_parts(item: dict, today):
     """(date_str, days_left, is_passed) 반환.
     date_str: 'M/D' 형식(파싱 안 되면 원문/'미정'). days_left: 오늘 기준 D-day 정수, 파싱 불가면 None.
@@ -72,45 +64,10 @@ def format_money(raw) -> str:
     return f"{man:,}만원"
 
 
-def _compact_line(idx, item: dict, label: str) -> str:
-    """`{idx}. *[기관]* <링크|제목> — 라벨 M/D` 한 줄짜리 항목 포맷."""
-    org = item.get("ntceInsttNm", "")
-    title = item.get("bidNtceNm", "")
-    url = item.get("bidNtceDtlUrl", "")
-    short_date = _short_date(item)
-    title_part = f"<{url}|{title}>" if url else title
-    review_tag = " ⚠️`확인필요`" if item.get("_tier") == "review" else ""
-    star = item.get("_star")
-    star_tag = f" ⭐`확실후보(과거 {star['org']} 수주)`" if star else ""
-    codes = item.get("_industry_codes")
-    codes_tag = f" 📄`업종코드확인({','.join(sorted(codes))})`" if codes else ""
-    return f"{idx}. *[{org}]* {title_part} — {label} {short_date}{star_tag}{codes_tag}{review_tag}"
-
-
-def _sort_by_deadline(items: list) -> list:
-    """마감일 오름차순으로 정렬한다 (마감일 파싱 안 되는 항목은 뒤로)."""
-    return sorted(items, key=lambda it: (deadline_date(it) is None, deadline_date(it) or date.max))
-
-
-CONFIDENCE_LEGEND = (
-    "⚠️ `확인필요` 판단 기준 — 다음 중 하나에 해당해 자동판정이 애매한 건입니다:\n"
-    "  · 발주기관이 대학교/지자체 핵심군이 아닌 공공기관 성격(공사·공단·협회·연구원 등)\n"
-    "  · 제목이 '운영/교육' 같은 범용 단어로만 매칭돼 실제 교육·콘텐츠 사업인지 불확실\n"
-    "  · 업종제한 조회 실패로 참가가능 여부를 확정하지 못함\n"
-    "직접 공고문을 열어 확인해주세요."
-)
-
-
-def format_confidence_legend(all_items: list) -> str:
-    """items 중 하나라도 확인필요(_tier=='review')가 있으면 판단 기준 설명을 붙인다."""
-    if not any(item.get("_tier") == "review" for item in all_items):
-        return ""
-    return "\n\n" + CONFIDENCE_LEGEND
-
-
 def format_star_reminder(star_postings: list, today) -> str:
-    """이미 발송됐지만 마감이 안 지난 확실후보(⭐)를 매일 다시 안내하는 섹션.
-    star_postings: db.get_active_star_postings()가 반환하는 postings 테이블 row dict 리스트."""
+    """이미 발송됐지만 마감이 안 지난, 예전에 함께 일한 기관의 공고를 매일 다시 안내하는 섹션.
+    star_postings: db.get_active_star_postings()가 반환하는 postings 테이블 row dict 리스트.
+    2026-09-22 피드백: "확실후보" 같은 내부 용어 없이, 팀원이 바로 이해할 수 있는 문구로 정리."""
     if not star_postings:
         return ""
 
@@ -129,7 +86,7 @@ def format_star_reminder(star_postings: list, today) -> str:
     if not rows:
         return ""
 
-    lines = [f"*⭐ 확실 후보 — 마감까지 계속 안내 ({len(rows)}건)*", ""]
+    lines = [f"*\U0001F4CC 예전에 함께 일한 기관에서 새 공고가 떴어요 ({len(rows)}건)*", ""]
     for idx, row in enumerate(rows, 1):
         org = row.get("org", "")
         title = row.get("title", "")
@@ -141,7 +98,7 @@ def format_star_reminder(star_postings: list, today) -> str:
         else:
             delta = (d - today).days
             dday_text = f"{_urgency_emoji(delta)} `{d.month}/{d.day} (D-{delta})`" if delta > 0 else f"{_urgency_emoji(delta)} `{d.month}/{d.day} (D-day)`"
-        lines.append(f"`#{idx}` ⭐ *[{org}]* {title_part} — 마감 {dday_text}")
+        lines.append(f"`#{idx}` *[{org}]* {title_part} — 마감 {dday_text}")
 
     return "\n".join(lines)
 
@@ -149,20 +106,25 @@ def format_star_reminder(star_postings: list, today) -> str:
 def format_urgent_digest(entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP") -> str:
     """세 소스를 합쳐 마감이 가장 급한 순으로 top_n개만 뽑은 요약 섹션.
     entries: [(source_tag, label, item), ...] — 소스마다 마감 필드 라벨(마감/의견마감/신청)이 다르므로 같이 받는다.
-    title: 헤더 앞부분 텍스트 — 확실포함용 "🔥 마감임박 TOP"과 확인필요 참고용 섹션을 같은 카드 포맷으로
-    재사용하되 성격이 다르다는 걸 헤더로 구분하기 위함(2026-09-22)."""
+    title: 섹션 헤더 전체 텍스트 — 확실포함용/확인필요 참고용 섹션이 같은 카드 포맷을 재사용하되
+    성격이 다르다는 걸 구분하기 위해 호출부에서 지정한다(2026-09-22, 내부 용어 없이 사람이 바로
+    이해할 수 있는 문구로— "확인필요" 같은 태그는 더 이상 노출하지 않는다)."""
     dated = [(deadline_date(item), tag, label, item) for tag, label, item in entries]
     dated = [d for d in dated if d[0] is not None and d[0] >= today]
     dated.sort(key=lambda d: d[0])
     top = dated[:top_n]
 
-    header = f"*{title} {len(top)} (전체 {len(entries)}건 중 오늘 기준 가장 급한 것부터)*"
+    header = f"*{title} ({len(top)}건)*"
     if not top:
         return f"{header}\n마감일이 확인되는 공고가 없어 생략합니다."
 
     lines = [header, ""]
-    for idx, (_, tag, label, item) in enumerate(top, 1):
-        lines.append(f"{_compact_line(idx, item, label)}  `{tag}`")
+    for idx, (d, tag, label, item) in enumerate(top, 1):
+        org = item.get("ntceInsttNm", "")
+        item_title = item.get("bidNtceNm", "")
+        url = item.get("bidNtceDtlUrl", "")
+        title_part = f"<{url}|{item_title}>" if url else item_title
+        lines.append(f"{idx}. *[{org}]* {title_part} — {label} {d.month}/{d.day}  `{tag}`")
 
     return "\n".join(lines)
 
@@ -212,7 +174,10 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
     이 카드형 레이아웃은 TOP N에만 쓰고, 전체 리스트는 기존 압축 텍스트(chunk_mrkdwn_blocks)로 보낸다.
     2026-09-18 가독성 개선: 마감 임박도를 신호등 이모지로, 수치성 정보(예산/계약방법/마감)는 코드
     서식(`)으로 감싸서 한눈에 훑기 쉽게 만들었다.
-    title: 헤더 앞부분 텍스트(format_urgent_digest와 동일한 이유로 파라미터화, 2026-09-22)."""
+    title: 섹션 헤더 전체 텍스트(format_urgent_digest와 동일한 이유로 파라미터화).
+    2026-09-22 피드백: 판단 사유 인용문과 "적합성"(확실포함/확인필요 등 내부 용어) 필드를 카드에서
+    뺐다 — 팀원은 우리가 내부적으로 어떤 기준으로 걸렀는지 몰라도 되고, 그냥 깔끔하게 공고 정보만
+    보면 된다."""
     dated = [(deadline_date(item), tag, label, item) for tag, label, item in entries]
     dated = [d for d in dated if d[0] is not None and d[0] >= today]
     dated.sort(key=lambda d: d[0])
@@ -221,7 +186,7 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
     blocks = [
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": f"{title} {len(top)} (전체 {len(entries)}건 중)", "emoji": True},
+            "text": {"type": "plain_text", "text": f"{title} ({len(top)}건)", "emoji": True},
         }
     ]
 
@@ -232,18 +197,12 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
     rank_emoji = ["\U0001F947", "\U0001F948", "\U0001F949"]  # 🥇🥈🥉 TOP3만 메달, 나머지는 번호
 
     for idx, (_, tag, label, item) in enumerate(top, 1):
-        title = item.get("bidNtceNm", "")
+        item_title = item.get("bidNtceNm", "")
         url = item.get("bidNtceDtlUrl", "")
         source_emoji = _SOURCE_TAG_EMOJI.get(tag, "\U0001F4C4")
         rank_marker = rank_emoji[idx - 1] if idx <= 3 else f"`#{idx}`"
 
-        star = item.get("_star")
-        star_prefix = "⭐ " if star else ""
-
-        title_line = f"{rank_marker} {source_emoji} {star_prefix}*<{url}|{title}>*" if url else f"{rank_marker} {source_emoji} {star_prefix}*{title}*"
-
-        reasons = " / ".join(item.get("_reasons", []))
-        section_text = f"{title_line}\n> {reasons}" if reasons else title_line
+        title_line = f"{rank_marker} {source_emoji} *<{url}|{item_title}>*" if url else f"{rank_marker} {source_emoji} *{item_title}*"
 
         date_str, delta, passed = dday_parts(item, today)
         if delta is None:
@@ -256,88 +215,22 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
             dday_text = f"`{date_str} (D-{delta})`"
         dday_text = f"{_urgency_emoji(delta)} {dday_text}"
 
-        if star:
-            fit_text = "⭐ `확실후보`"
-        elif item.get("_tier") == "review":
-            fit_text = "⚠️ `확인필요`"
-        else:
-            fit_text = "✅ `확실포함`"
-
         blocks.append(
             {
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": section_text},
+                "text": {"type": "mrkdwn", "text": title_line},
                 "fields": [
                     {"type": "mrkdwn", "text": f"\U0001F3E2 *발주기관*\n{item.get('ntceInsttNm', '')}"},
                     {"type": "mrkdwn", "text": f"{source_emoji} *구분*\n`{tag}`"},
                     {"type": "mrkdwn", "text": f"\U0001F4B0 *예산*\n`{format_money(item.get('asignBdgtAmt', ''))}`"},
                     {"type": "mrkdwn", "text": f"\U0001F4DD *계약방법*\n`{item.get('cntrctCnclsMthdNm') or '-'}`"},
                     {"type": "mrkdwn", "text": f"⏰ *{label}*\n{dday_text}"},
-                    {"type": "mrkdwn", "text": f"\U0001F3AF *적합성*\n{fit_text}"},
                 ],
             }
         )
         blocks.append({"type": "divider"})
 
     return blocks
-
-
-def format_slack_message(items: list, start_date, end_date, categories=("용역",)) -> str:
-    """Slack Incoming Webhook로 보낼 메시지 텍스트(mrkdwn)를 만든다."""
-    category_label = "/".join(categories)
-    period_label = start_date.isoformat() if start_date == end_date else f"{start_date.isoformat()}~{end_date.isoformat()}"
-    header = f"*\U0001F4CB 나라장터 입찰공고 알림 — {period_label} 게시분 ({len(items)}건)*"
-
-    if not items:
-        return (
-            f"{header}\n"
-            f"{period_label}에 게시된 {category_label} 공고를 확인했지만, "
-            f"교육/양성 키워드 + 대학교·지자체 발주기관 조건을 모두 만족하는 신규 공고가 없었습니다."
-        )
-
-    lines = [header, ""]
-    for idx, item in enumerate(_sort_by_deadline(items), 1):
-        lines.append(_compact_line(idx, item, "마감"))
-
-    return "\n".join(lines)
-
-
-def format_pre_spec_message(items: list, start_date, end_date) -> str:
-    """사전규격(용역) 알림 섹션을 Slack mrkdwn 텍스트로 만든다. (입찰공고보다 먼저 뜨는 초기 정보이므로 별도 섹션으로 구성)"""
-    period_label = start_date.isoformat() if start_date == end_date else f"{start_date.isoformat()}~{end_date.isoformat()}"
-    header = f"*\U0001F4D0 나라장터 사전규격 알림 — {period_label} 등록분 ({len(items)}건)*"
-
-    if not items:
-        return (
-            f"{header}\n"
-            f"{period_label}에 등록된 용역 사전규격을 확인했지만, "
-            f"교육/양성 키워드 + 대학교·지자체(수요기관) 조건을 모두 만족하는 신규 건이 없었습니다."
-        )
-
-    lines = [header, ""]
-    for idx, item in enumerate(_sort_by_deadline(items), 1):
-        lines.append(_compact_line(idx, item, "의견"))
-
-    return "\n".join(lines)
-
-
-def format_bizinfo_message(items: list, start_date, end_date) -> str:
-    """기업마당(중소기업 지원사업) 알림 섹션을 Slack mrkdwn 텍스트로 만든다."""
-    period_label = start_date.isoformat() if start_date == end_date else f"{start_date.isoformat()}~{end_date.isoformat()}"
-    header = f"*\U0001F3E2 기업마당 지원사업 알림 — {period_label} 등록분 ({len(items)}건)*"
-
-    if not items:
-        return (
-            f"{header}\n"
-            f"{period_label}에 등록된 지원사업 공고를 확인했지만, "
-            f"교육/양성 키워드 + 기관 조건을 모두 만족하는 신규 건이 없었습니다."
-        )
-
-    lines = [header, ""]
-    for idx, item in enumerate(_sort_by_deadline(items), 1):
-        lines.append(_compact_line(idx, item, "신청"))
-
-    return "\n".join(lines)
 
 
 def send_to_slack(text: str, blocks: list = None, webhook_url: str = None, max_retries: int = 3) -> bool:

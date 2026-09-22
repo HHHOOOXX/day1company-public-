@@ -26,7 +26,7 @@ from . import db
 from .alio import fetch_alio_org_names, fetch_alio_preview
 from .bizinfo import fetch_bizinfo_preview, get_daily_relevant_bizinfo
 from .classify import tag_business_area
-from .config import BIZINFO_SERVICE_KEY, DASHBOARD_URL, REPO_ROOT, SERVICE_KEY
+from .config import BIZINFO_SERVICE_KEY, DASHBOARD_URL, REPO_ROOT, SERVICE_KEY, SLACK_MENTION
 from .g2b import (
     COLLECTION_WARNINGS,
     analyze_classifications,
@@ -209,8 +209,9 @@ def run_daily_notification(
     # 카드와 헤더 문구로 명확히 구분되므로 서로 혼동되지 않는다.
     core_entries = [e for e in urgent_entries if e[2].get("_tier") != "review"]
     review_entries = [e for e in urgent_entries if e[2].get("_tier") == "review"]
-    review_count = len(review_entries)
 
+    # 2026-09-22 피드백: "⚠️확인필요 N건 포함" 같은 내부 등급 문구 없이, 그냥 오늘 몇 건씩 확인했는지만
+    # 담백하게 알려준다.
     summary_lines = [
         f"오늘 나라장터 입찰공고 {len(bid_pairs)}건",
     ]
@@ -218,24 +219,25 @@ def run_daily_notification(
         summary_lines.append(f"사전규격 {len(pre_spec_pairs)}건")
     if include_bizinfo and BIZINFO_SERVICE_KEY:
         summary_lines.append(f"기업마당 {len(bizinfo_pairs)}건")
-    summary_text = " / ".join(summary_lines) + f" 확인"
-    if review_count:
-        summary_text += f" (⚠️확인필요 {review_count}건 포함)"
+    summary_text = " / ".join(summary_lines) + " 확인했어요"
 
     dashboard_text = ""
     if DASHBOARD_URL:
         dashboard_text = f"\U0001F4CA 전체 공고 목록: <{DASHBOARD_URL}|AX사업기획실 공고목록>"
 
+    # 2026-09-22: 두 카드 섹션 헤더는 내부 등급명("확실포함"/"확인필요") 없이, 팀원이 바로 이해할 수
+    # 있는 문구로 통일한다. 확인해볼 만한 공고 섹션은 review_count와 무관하게 review_entries가 있는
+    # 한 항상 노출된다(요청: "굳이 AI 연결하지 말고 기존 필터링 결과에서 3~5개 추려서 같이 보내자").
+    core_title = "\U0001F4CB 오늘의 추천 공고"
+    review_title = "\U0001F50D 이런 공고도 살펴보세요"
+
     # text(폴백/콘솔 미리보기)
     message_parts = []
     if core_entries:
-        message_parts.append(format_urgent_digest(core_entries, today=datetime.now().date(), top_n=5))
+        message_parts.append(format_urgent_digest(core_entries, today=datetime.now().date(), top_n=5, title=core_title))
     if review_entries:
         message_parts.append(
-            format_urgent_digest(
-                review_entries, today=datetime.now().date(), top_n=5,
-                title="\U0001F50D 확인해볼 만한 공고(참고용) TOP",
-            )
+            format_urgent_digest(review_entries, today=datetime.now().date(), top_n=5, title=review_title)
         )
     message_parts.append(summary_text)
     if star_section:
@@ -257,19 +259,16 @@ def run_daily_notification(
         conn.close()
         return
 
-    message = "<!channel>\n" + message
+    message = f"{SLACK_MENTION}\n" + message
 
-    # blocks(실제 Slack 레이아웃): 채널 멘션 → 핵심 공고 TOP 5 카드 → 확인해볼 만한 공고(참고용) →
-    # 요약 카운트 → 확실후보 리마인더 → 대시보드 링크. 전체 리스트 나열은 더 이상 채널에 뿌리지 않는다.
-    blocks = [mrkdwn_section("<!channel>")]
+    # blocks(실제 Slack 레이아웃): 멘션 → 오늘의 추천 공고 → 이런 공고도 살펴보세요 →
+    # 요약 카운트 → 예전 협업 기관 리마인더 → 대시보드 링크. 전체 리스트 나열은 더 이상 채널에 뿌리지 않는다.
+    blocks = [mrkdwn_section(SLACK_MENTION)]
     if core_entries:
-        blocks.extend(format_urgent_blocks(core_entries, today=datetime.now().date(), top_n=5))
+        blocks.extend(format_urgent_blocks(core_entries, today=datetime.now().date(), top_n=5, title=core_title))
     if review_entries:
         blocks.extend(
-            format_urgent_blocks(
-                review_entries, today=datetime.now().date(), top_n=5,
-                title="\U0001F50D 확인해볼 만한 공고(참고용) TOP",
-            )
+            format_urgent_blocks(review_entries, today=datetime.now().date(), top_n=5, title=review_title)
         )
     blocks.append(mrkdwn_section(summary_text))
     if star_section:
