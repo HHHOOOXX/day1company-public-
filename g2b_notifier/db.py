@@ -54,10 +54,9 @@ def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.executescript(_SCHEMA)
     _ensure_column(conn, "postings", "is_star", "INTEGER NOT NULL DEFAULT 0")
-    # 2026-09-18: Streamlit 대시보드가 DB만 보고도 오늘 만들었던 판정(확신도/사유/업종코드/확실후보
-    # 근거)을 그대로 재현할 수 있도록, 그때그때 메모리에만 있던 _tier/_reasons/_star/_industry_codes를
-    # JSON으로 같이 저장해둔다 (정적 HTML 대시보드는 실행 중 값을 바로 쓰지만, DB 기반 뷰어는 이게 없으면
-    # 발주기관/제목/마감일 같은 뼈대 정보만 남고 판정 근거를 잃어버린다).
+    # 2026-09-18: DB만 보고도 오늘 만들었던 판정(확신도/사유/업종코드/확실후보 근거)을 그대로
+    # 되짚어볼 수 있도록, 그때그때 메모리에만 있던 _tier/_reasons/_star/_industry_codes를 JSON으로
+    # 같이 저장해둔다 — 이게 없으면 발주기관/제목/마감일 같은 뼈대 정보만 남고 판정 근거를 잃어버린다.
     _ensure_column(conn, "postings", "classification_json", "TEXT")
     _ensure_column(conn, "postings", "method", "TEXT")
     conn.commit()
@@ -106,8 +105,8 @@ def upsert_posting(
     반환값: {"is_new": 처음 보는 공고인가, "already_notified": 예전에 이미 슬랙 발송됐는가}
     이미 발송된 공고는 오늘 조회 기간과 겹치더라도(예: 월요일이 직전 금요일을 다시 훑는 경우)
     already_notified=True로 나오므로, 호출부에서 중복 알림을 걸러낼 수 있다.
-    classification: {"tier", "reasons", "star", "industry_codes"} — Streamlit 대시보드용으로
-    그대로 저장해둔다(get_all_postings 참고)."""
+    classification: {"tier", "reasons", "star", "industry_codes"} — 판정 근거를 그대로 저장해서,
+    그날 실행이 끝난 뒤에도 왜 이렇게 분류됐는지 DB만 보고 되짚어볼 수 있게 남겨둔다."""
     row = conn.execute("SELECT notified FROM postings WHERE id = ?", (posting_id,)).fetchone()
     tags_json = json.dumps(category_tags, ensure_ascii=False)
     classification_json = json.dumps(classification or {}, ensure_ascii=False)
@@ -158,36 +157,6 @@ def get_active_star_postings(conn: sqlite3.Connection, today_str: str) -> list:
     ).fetchall()
     columns = ["id", "source", "title", "org", "budget", "posted_at", "close_at", "url", "category_tags"]
     return [dict(zip(columns, row)) for row in rows]
-
-
-def get_all_postings(conn: sqlite3.Connection) -> list:
-    """postings 전체를 dict 리스트로 반환한다(Streamlit 대시보드 전용 읽기 전용 조회).
-    category_tags/classification_json은 파싱해서 각각 tags/classification 키로 풀어 담는다."""
-    rows = conn.execute(
-        """
-        SELECT id, source, title, org, budget, posted_at, close_at, url, category_tags,
-               first_seen_date, last_seen_date, notified, is_star, classification_json, method
-        FROM postings
-        ORDER BY posted_at DESC
-        """
-    ).fetchall()
-    columns = [
-        "id", "source", "title", "org", "budget", "posted_at", "close_at", "url", "category_tags",
-        "first_seen_date", "last_seen_date", "notified", "is_star", "classification_json", "method",
-    ]
-    results = []
-    for row in rows:
-        item = dict(zip(columns, row))
-        try:
-            item["tags"] = json.loads(item.pop("category_tags") or "[]")
-        except (TypeError, ValueError):
-            item["tags"] = []
-        try:
-            item["classification"] = json.loads(item.pop("classification_json") or "{}")
-        except (TypeError, ValueError):
-            item["classification"] = {}
-        results.append(item)
-    return results
 
 
 def get_historical_bid_titles(conn: sqlite3.Connection) -> list:

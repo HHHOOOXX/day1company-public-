@@ -9,10 +9,10 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(dotenv_path=os.path.join(REPO_ROOT, ".env"))
 
 # 2026-09-18: 예전엔 G2B_SERVICE_KEY가 없으면 이 모듈을 import하는 순간 바로 sys.exit(1)했는데,
-# Streamlit 대시보드(streamlit_app.py)는 db.py를 통해 이 모듈을 간접 import하면서도 실제로는
-# G2B API를 전혀 호출하지 않는다 — 그런데도 키가 없으면 대시보드 자체가 못 뜨는 문제가 있었다.
-# 이제는 키가 없어도 import는 통과하고(SERVICE_KEY=""), 실제로 API를 호출하는 notify 경로에서만
-# cli.py가 명시적으로 키 유무를 확인해서 그 자리에서 에러 처리한다.
+# db.py를 통해 이 모듈을 간접 import하면서도 실제로는 G2B API를 전혀 호출하지 않는 도구(예: DB만
+# 읽는 리포팅 스크립트)는 키가 없으면 아예 못 뜨는 문제가 있었다. 이제는 키가 없어도 import는
+# 통과하고(SERVICE_KEY=""), 실제로 API를 호출하는 notify 경로에서만 cli.py가 명시적으로 키 유무를
+# 확인해서 그 자리에서 에러 처리한다.
 _raw_key = os.getenv("G2B_SERVICE_KEY", "")
 # Encoding형/Decoding형 어느 쪽이 들어와도 동일하게 동작하도록 정규화
 SERVICE_KEY = unquote(_raw_key) if _raw_key else ""

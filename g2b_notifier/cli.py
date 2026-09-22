@@ -279,8 +279,8 @@ def run_daily_notification(
 
 def _require_g2b_key():
     """나라장터 API를 실제로 호출하는 서브커맨드 진입 시점에만 키 유무를 확인한다.
-    (config.py는 더 이상 import 시점에 강제 종료하지 않는다 — streamlit_app.py처럼 API를
-    전혀 안 쓰고 DB만 읽는 코드가 이 패키지를 import만 해도 죽는 문제가 있었다.)"""
+    (config.py는 더 이상 import 시점에 강제 종료하지 않는다 — API를 전혀 안 쓰고 DB만 읽는
+    별도 도구가 이 패키지를 import만 해도 죽는 문제가 있었다.)"""
     if not SERVICE_KEY:
         print("[에러] .env 파일에 G2B_SERVICE_KEY 가 설정되어 있지 않습니다.")
         print("       .env 파일에 아래 줄을 추가하세요:")

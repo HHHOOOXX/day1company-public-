@@ -2,5 +2,3 @@ requests
 python-dotenv
 olefile
 pypdf
-streamlit
-pandas
