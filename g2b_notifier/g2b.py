@@ -1,21 +1,37 @@
 """나라장터(조달청) 입찰공고정보서비스 + 사전규격정보서비스 연동."""
 
+import re
 import time
 from collections import Counter
 from datetime import datetime, timedelta
+from urllib.parse import unquote
 
 import requests
 
-from .classify import _matches_any, dedupe_latest, is_relevant_bid
+from .classify import (
+    _matches_any,
+    attach_confidence,
+    build_learned_keywords,
+    dedupe_latest,
+    is_relevant_bid,
+    is_relevant_prespec,
+)
 from .config import (
     BASE_URL,
+    COMPANY_INDUSTRY_CODES,
     EDU_KEYWORDS,
+    EXCLUDE_INDUSTRY_CODES,
     OPERATIONS,
     ORG_KEYWORDS,
     PRE_SPEC_BASE_URL,
     PRE_SPEC_LIST_OPERATION,
     SERVICE_KEY,
 )
+from .doc_extract import extract_document_text, find_industry_codes
+
+LICENSE_LIMIT_OPERATION = "getBidPblancListInfoLicenseLimit"
+PRTCPT_PSBL_RGN_OPERATION = "getBidPblancListInfoPrtcptPsblRgn"
+HQ_REGION_TOKEN = "서울"
 
 
 # 페이지 수집이 재시도 끝에도 실패한 경우 여기 쌓인다.
@@ -289,12 +305,12 @@ def _normalize_pre_spec(item: dict) -> dict:
     - 제목: prdctClsfcNoNm(품명)
     - 발주처: rlDminsttNm(수요기관, 실제 사업 주체) 우선, 없으면 orderInsttNm(조달청 대행기관)
     - 마감: opninRgstClseDt(규격서 의견등록 마감)
-    - 링크: specDocFileUrl1~5 중 첫 번째 비어있지 않은 규격서 첨부파일
+    - 링크: 일단 specDocFileUrl1~5 중 첫 번째로 채워두고, 최종 필터링을 통과한 건에 한해
+      get_daily_relevant_pre_specs에서 resolve_task_order_url로 '과업지시서'류 파일로 교체한다
+      (사전규격 API는 첨부파일명 필드를 안 줘서, 전체 원본 목록은 _spec_doc_urls에 남겨둔다).
     - 예산: asignBdgtAmt(배정예산금액)"""
-    spec_url = next(
-        (item.get(f"specDocFileUrl{i}") for i in range(1, 6) if item.get(f"specDocFileUrl{i}")),
-        "",
-    )
+    spec_urls = [item.get(f"specDocFileUrl{i}", "") for i in range(1, 6)]
+    spec_url = next((u for u in spec_urls if u), "")
     return {
         "bidNtceNm": item.get("prdctClsfcNoNm", ""),
         "ntceInsttNm": item.get("rlDminsttNm", "") or item.get("orderInsttNm", ""),
@@ -304,7 +320,69 @@ def _normalize_pre_spec(item: dict) -> dict:
         "bidClseDt": item.get("opninRgstClseDt", ""),
         "bidNtceDtlUrl": spec_url,
         "asignBdgtAmt": item.get("asignBdgtAmt", ""),
+        "_spec_doc_urls": spec_urls,
     }
+
+
+TASK_ORDER_FILENAME_HINTS = ["과업지시서", "과업내용서", "과업수행계획서", "과업지시"]
+
+
+def _content_disposition_filename(url: str) -> str:
+    """첨부파일 다운로드 URL에 요청을 보내 실제 파일명을 얻는다(stream=True로 헤더만 읽고 바로 닫아서
+    본문 다운로드는 하지 않음). 사전규격 API 응답엔 파일명 필드가 아예 없어서 이 방법밖에 없다."""
+    try:
+        resp = requests.get(url, timeout=10, stream=True, headers={"User-Agent": "Mozilla/5.0"})
+        content_disposition = resp.headers.get("Content-Disposition", "")
+        resp.close()
+    except requests.exceptions.RequestException:
+        return ""
+
+    match = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)", content_disposition)
+    if not match:
+        return ""
+    return unquote(match.group(1))
+
+
+def _fetch_attachment(url: str):
+    """첨부파일을 통째로 내려받아 (파일명, 원문 바이트)를 반환한다. 실패 시 ("", b"")."""
+    try:
+        resp = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+    except requests.exceptions.RequestException:
+        return "", b""
+    match = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)", resp.headers.get("Content-Disposition", ""))
+    filename = unquote(match.group(1)) if match else ""
+    return filename, resp.content
+
+
+def resolve_prespec_attachments(spec_urls: list):
+    """사전규격 첨부파일(specDocFileUrl1~5)을 한 번씩만 내려받아, (1) '과업지시서'류로 이어줄 링크와
+    (2) 문서 본문에서 찾은 우리 보유 업종코드 교집합을 함께 반환한다. 링크 선택과 업종코드 탐지가
+    같은 다운로드를 재사용하도록 묶어서, 건당 최대 5번인 요청 횟수가 두 배로 늘지 않게 한다.
+    반환값: (best_url: str, matched_industry_codes: set). 최종 필터를 통과한 소수 건에만 호출한다."""
+    candidates = [u for u in spec_urls if u]
+    if not candidates:
+        return "", set()
+
+    fetched = [(url, *_fetch_attachment(url)) for url in candidates]
+
+    best_url = candidates[0]
+    for hint in TASK_ORDER_FILENAME_HINTS:
+        for url, filename, _ in fetched:
+            if hint in filename:
+                best_url = url
+                break
+        else:
+            continue
+        break
+
+    matched_codes = set()
+    for _, filename, raw in fetched:
+        if not raw:
+            continue
+        text = extract_document_text(raw, filename)
+        matched_codes |= find_industry_codes(text)
+
+    return best_url, matched_codes & COMPANY_INDUSTRY_CODES
 
 
 def fetch_pre_specs_for_date_range(start_date=None, end_date=None, page_size: int = 100, max_pages: int = 20):
@@ -394,10 +472,145 @@ def analyze_classifications(category: str = "용역", days: int = 30):
             print(f"  [{item.get('ntceInsttNm', '')}] {item.get('bidNtceNm', '')}")
 
 
+def _induty_code(lcns_lmt_nm: str) -> str:
+    """면허제한정보 응답의 'lcnsLmtNm'("학술.연구용역/1169" 형식)에서 뒤의 업종코드만 뽑는다."""
+    return lcns_lmt_nm.rsplit("/", 1)[-1].strip() if "/" in (lcns_lmt_nm or "") else ""
+
+
+def fetch_license_limit(bid_ntce_no: str, bid_ntce_ord: str):
+    """해당 공고의 업종제한(면허제한) 목록을 조회한다. API 실패 시 None(판정 불가)."""
+    params = {
+        "ServiceKey": SERVICE_KEY,
+        "type": "json",
+        "inqryDiv": "2",  # 2: 공고번호+차수 기준 조회
+        "bidNtceNo": bid_ntce_no,
+        "bidNtceOrd": bid_ntce_ord,
+        "pageNo": "1",
+        "numOfRows": "100",
+    }
+    result = _call_api(LICENSE_LIMIT_OPERATION, params)
+    if result is None:
+        return None
+    return result["items"]
+
+
+def check_induty_eligibility(item: dict):
+    """업종제한이 걸린 공고를 그룹별로 엄격하게 판정한다.
+    나라장터의 복수면허제한은 그룹(lmtGrpNo)별로 각각 최소 1개 업종을 보유해야 하는 구조라
+    (그룹 내부는 OR, 그룹 간은 AND), 어느 한 그룹이라도 보유 업종코드와 전혀 겹치지 않으면
+    우리 회사 단독으로는 참가 불가로 확정한다.
+    단, 제한경쟁이라고만 표시되고 실제 업종코드가 기재되지 않은 그룹(또는 응답 전체)은
+    판정 근거가 없으므로 통과로 간주해 보수적으로 포함시킨다.
+
+    2026-09-18 수정: 목록 조회의 indstrytyLmtYn 플래그로 API 호출을 건너뛰던 걸 없앴다 — 같은
+    문제의 지역제한 플래그(rgnLmtBidLocplcJdgmBssCd)가 실제로는 제한이 있는데도 빈 값으로 오는
+    사례가 실증됐고(check_region_eligibility 참고), 업종제한 플래그도 같은 신뢰성 문제가 있을 수
+    있어 플래그와 무관하게 항상 면허제한정보를 직접 조회해서 확정한다.
+
+    반환값: (ok, certain, matched_codes)
+      ok=False   -> 업종 불일치로 참가 불가 확정 (호출 측에서 제외).
+      certain=False -> API 조회 실패로 판정을 확정하지 못함. ok는 일단 True(통과)로 두되,
+                        호출 측에서 '확인 필요'로 표시해야 한다는 신호.
+      matched_codes -> 실제 업종제한 목록에서 우리 보유 업종코드와 겹친 코드들(2026-09-18 추가).
+                        대시보드 '업종코드 확인' 열에 사전규격의 문서 기반 확인과 동일하게 표시한다."""
+    bid_ntce_no = item.get("bidNtceNo", "")
+    bid_ntce_ord = item.get("bidNtceOrd", "0")
+    limits = fetch_license_limit(bid_ntce_no, bid_ntce_ord)
+
+    if limits is None:
+        COLLECTION_WARNINGS.append(
+            f"업종제한 조회 실패: {bid_ntce_no}-{bid_ntce_ord} (판정 보류, 일단 포함 — 직접 확인 필요)"
+        )
+        return True, False, set()
+
+    if not limits:
+        # 제한경쟁이지만 업종코드 자체가 기재되지 않은 경우 -> 포함
+        return True, True, set()
+
+    groups = {}
+    for row in limits:
+        grp = row.get("lmtGrpNo", "0")
+        groups.setdefault(grp, set()).add(_induty_code(row.get("lcnsLmtNm", "")))
+
+    matched_codes = set()
+    for codes in groups.values():
+        codes.discard("")
+        if not codes:
+            continue  # 이 그룹은 업종코드 미기재 -> 통과로 간주
+        overlap = codes & COMPANY_INDUSTRY_CODES
+        if not overlap:
+            excluded_hit = codes & EXCLUDE_INDUSTRY_CODES
+            if excluded_hit:
+                print(f"  [업종제외] {excluded_hit} 코드가 제한 그룹에 있고 보유 업종과 안 겹침 -> 배제")
+            return False, True, set()  # 이 그룹을 보유 업종으로 채울 수 없음 -> 참가 불가 확정
+        matched_codes |= overlap
+
+    return True, True, matched_codes
+
+
+def fetch_participation_region(bid_ntce_no: str, bid_ntce_ord: str):
+    """해당 공고의 참가가능지역(prtcptPsblRgnNm) 목록을 조회한다. API 실패 시 None(판정 불가)."""
+    params = {
+        "ServiceKey": SERVICE_KEY,
+        "type": "json",
+        "inqryDiv": "2",
+        "bidNtceNo": bid_ntce_no,
+        "bidNtceOrd": bid_ntce_ord,
+        "pageNo": "1",
+        "numOfRows": "100",
+    }
+    result = _call_api(PRTCPT_PSBL_RGN_OPERATION, params)
+    if result is None:
+        return None
+    return result["items"]
+
+
+def check_region_eligibility(item: dict):
+    """공고의 참가가능지역에 우리 본사 소재지(서울)가 포함되는지 확인한다. 데이원컴퍼니 본사가
+    서울에 있으므로, 참가가능지역 조회 결과가 비어있거나(=지역제한 없음) '서울'이 포함되면
+    통과시키고, 그 외 지역으로만 한정되면 참가 불가로 확정한다.
+
+    2026-09-18 수정: 목록 조회의 rgnLmtBidLocplcJdgmBssCd 플래그가 비어있는데도 실제로는 특정
+    지역(예: 경상남도/부산광역시)으로 제한된 공고가 실제로 확인됐다(R26BK01735960, R26BK01734391 —
+    둘 다 플래그는 빈 값인데 getBidPblancListInfoPrtcptPsblRgn 조회 시 지역이 나옴). 플래그를
+    신뢰할 수 없으므로 값과 무관하게 항상 참가가능지역을 직접 조회해서 확정한다.
+    반환값: (ok, certain) — check_induty_eligibility와 동일한 규약."""
+    bid_ntce_no = item.get("bidNtceNo", "")
+    bid_ntce_ord = item.get("bidNtceOrd", "0")
+    regions = fetch_participation_region(bid_ntce_no, bid_ntce_ord)
+
+    if regions is None:
+        COLLECTION_WARNINGS.append(
+            f"지역제한 조회 실패: {bid_ntce_no}-{bid_ntce_ord} (판정 보류, 일단 포함 — 직접 확인 필요)"
+        )
+        return True, False
+
+    if not regions:
+        return True, True  # 조회 결과가 비어있으면 지역제한이 없는 공고 -> 통과
+
+    region_names = [r.get("prtcptPsblRgnNm", "") for r in regions]
+    if any(HQ_REGION_TOKEN in name for name in region_names):
+        return True, True
+
+    print(f"  [지역제외] 참가가능지역 {region_names} 에 '{HQ_REGION_TOKEN}' 없음 -> 배제")
+    return False, True
+
+
+def is_negotiated_contract(item: dict) -> bool:
+    """수의계약(경쟁입찰 없이 발주기관이 특정 업체와 바로 계약)은 완전히 제외한다.
+    2026-09-18 재확인: 실제 API 데이터로 검증한 결과 '수의시담'/'다자간수의시담'은 낙찰방법
+    (sucsfbidMthdNm)의 하위 항목일 뿐이고, 이런 건은 예외 없이 계약방법(cntrctCnclsMthdNm)이
+    항상 '수의계약'으로 잡힌다(29일치 2100건 전수조사, 수의시담 344건 전부 확인) — 그래서
+    cntrctCnclsMthdNm만 봐도 수의시담/다자간수의시담까지 전부 같이 제외된다."""
+    return (item.get("cntrctCnclsMthdNm") or "") == "수의계약"
+
+
 def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=None):
     """지정 기간(기본값: get_lookback_range() — 월요일은 직전 금요일 하루, 그 외엔 어제 하루) 동안 게시된 공고 중,
-    중복 제거 + 우리팀 관심 조건(키워드∩발주기관)을 만족하는 공고만 반환한다.
-    (매일 지정 시각에 실행되는 슬랙 알림 배치에서 호출할 핵심 함수)"""
+    중복 제거 + 우리팀 관심 조건(키워드∩발주기관) + 수의계약/수의시담 제외 + 업종제한(보유 업종코드) +
+    지역제한(서울) 조건을 만족하는 공고를 반환한다. 애매하게 판정된 건('review' 등급)도 제외하지 않고
+    ⚠️ 태그를 달아 같이 포함시킨다 — 업종/지역 필터가 엄격해질수록 애매한 진짜 기회를 조용히 놓칠 위험이
+    커지기 때문. (매일 지정 시각에 실행되는 슬랙 알림 배치에서 호출할 핵심 함수)"""
     if start_date is None or end_date is None:
         start_date, end_date = get_lookback_range()
 
@@ -414,15 +627,51 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
     print(f"[중복제거] {len(raw_items)}건 → {len(deduped)}건 (공고번호 기준 최신 차수만 유지)")
 
     relevant = [item for item in deduped if is_relevant_bid(item)]
+    before_nego = len(relevant)
+    relevant = [item for item in relevant if not is_negotiated_contract(item)]
     relevant.sort(key=lambda item: item.get("bidNtceDt", ""))
-    print(f"[필터링] 키워드 + 발주기관 동시 매칭: {len(relevant)}건")
+    print(f"[필터링] 키워드 + 발주기관 동시 매칭: {before_nego}건 (수의계약/수의시담 제외 후 {len(relevant)}건)")
 
-    return relevant
+    attach_confidence(relevant)
+
+    eligible = []
+    for item in relevant:
+        ind_ok, ind_certain, matched_codes = check_induty_eligibility(item)
+        if not ind_ok:
+            continue
+        rgn_ok, rgn_certain = check_region_eligibility(item)
+        if not rgn_ok:
+            continue
+        # 2026-09-18 추가: 업종제한사항에서 실제로 우리 보유 코드가 확인된 공고는 대시보드
+        # '업종코드 확인' 열에도 사전규격과 동일하게 표시한다.
+        item["_industry_codes"] = matched_codes
+        if not ind_certain:
+            item["_tier"] = "review"
+            item["_reasons"].append("업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요")
+        if not rgn_certain:
+            item["_tier"] = "review"
+            item["_reasons"].append("지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요")
+        eligible.append(item)
+
+    review_count = sum(1 for item in eligible if item.get("_tier") == "review")
+    print(f"[업종/지역필터링] {len(relevant)}건 → {len(eligible)}건 (확인필요 {review_count}건 포함해서 전부 발송)")
+
+    return eligible
 
 
-def get_daily_relevant_pre_specs(start_date=None, end_date=None):
+def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_titles_orgs=None):
     """지정 기간(기본값: get_lookback_range()) 동안 등록된 사전규격(용역) 중,
-    중복 제거 + 우리팀 관심 조건(키워드∩수요기관)을 만족하는 건만 반환한다."""
+    중복 제거 + '학습된 키워드' 조건(핵심 발주기관 + 좁혀진 키워드)을 만족하는 건만 반환한다.
+
+    2026-09-18 재설계: 사전규격 API는 업종제한/지역제한 관련 필드/API가 아예 없어서(실제 호출로 확인
+    — getBidPblancListInfoLicenseLimit/PrtcptPsblRgn 둘 다 "해당 오픈API 서비스가 없거나 폐기됨")
+    입찰공고와 동일한 사후 검증을 할 수 없다. 대신 (1) 과거에 실제로 확실하게 매칭됐던 나라장터
+    입찰공고 제목에서 학습한 키워드와 (2) 우리팀 실제 수주 이력(WIN_HISTORY)에서 뽑은 키워드로만
+    사전에 좁혀서 필터링한다 (classify.build_learned_keywords 참고) — 애초에 전통시장/뷰티처럼
+    명백히 무관한 건이 안 들어오게 하는 게 목표.
+
+    통과한 소수의 건에 한해 링크를 규격서 첨부파일 중 '과업지시서'류로 교체한다(resolve_task_order_url).
+    historical_bid_titles_orgs: db.get_historical_bid_titles() 결과. 없으면 WIN_HISTORY만으로 학습."""
     if start_date is None or end_date is None:
         start_date, end_date = get_lookback_range()
 
@@ -431,8 +680,37 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None):
     deduped = dedupe_latest(raw_items)
     print(f"[중복제거] {len(raw_items)}건 → {len(deduped)}건 (사전규격등록번호 기준)")
 
-    relevant = [item for item in deduped if is_relevant_bid(item)]
+    learned_keywords = build_learned_keywords(historical_bid_titles_orgs or [])
+    print(f"[학습] 사전규격 필터링용 키워드 {len(learned_keywords)}개 (과거 확실매칭 입찰공고 + 수주이력 기반)")
+
+    relevant = [item for item in deduped if is_relevant_prespec(item, learned_keywords)]
+    before_attach = len(relevant)
+    # 2026-09-18 피드백: 첨부파일이 아예 없어서 과업지시서/규격서 중 어느 것도 링크로 못 거는 건은
+    # 발송해도 실무자가 열어볼 자료가 없으므로 제외한다.
+    relevant = [item for item in relevant if any(item.get("_spec_doc_urls", []))]
     relevant.sort(key=lambda item: item.get("bidNtceDt", ""))
-    print(f"[필터링] 키워드 + 수요기관 동시 매칭: {len(relevant)}건")
+    print(
+        f"[필터링] 학습된 키워드 + 핵심 발주기관 동시 매칭: {before_attach}건 "
+        f"(첨부파일 없는 건 제외 후 {len(relevant)}건)"
+    )
+
+    attach_confidence(relevant)
+
+    for item in relevant:
+        spec_urls = item.pop("_spec_doc_urls", [])
+        if _deadline_exceeded():
+            # 전체 수집 시간 상한에 걸리면 남은 건은 첨부파일 본문 다운로드/탐색 없이
+            # 기존 동작(첫 번째 첨부파일, 업종코드 미확인)으로 대체하고 넘어간다 — 정시 발송이 우선이다.
+            item["bidNtceDtlUrl"] = next((u for u in spec_urls if u), "")
+            item["_industry_codes"] = set()
+            continue
+        best_url, matched_codes = resolve_prespec_attachments(spec_urls)
+        item["bidNtceDtlUrl"] = best_url
+        item["_industry_codes"] = matched_codes
+        if matched_codes:
+            # 2026-09-18 피드백: 제안요청서 원문에서 우리 보유 업종코드가 실제로 확인되면(예:
+            # "이러닝콘텐츠업 (업종코드: 6527)") 키워드 매칭보다 훨씬 강한 신호이므로 확실로 격상한다.
+            item["_tier"] = "include"
+            item["_reasons"] = []
 
     return relevant

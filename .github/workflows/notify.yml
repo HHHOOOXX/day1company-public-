@@ -33,6 +33,9 @@ jobs:
           G2B_SERVICE_KEY: ${{ secrets.G2B_SERVICE_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           BIZINFO_SERVICE_KEY: ${{ secrets.BIZINFO_SERVICE_KEY }}
+          # 대시보드(AX사업기획실 공고목록) 호스팅 방식이 정해지면 그 URL을 시크릿으로 추가하면
+          # 슬랙 메시지 마지막에 링크가 자동으로 붙는다. 비어있으면 링크 블록 자체가 생략된다.
+          DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
           # ALIO_SERVICE_KEY는 실제 호출 방식을 아직 못 찾아 보류 중 (g2b_notifier/alio.py 참고)
         # 외부 크론이 부르는 workflow_dispatch는 항상 전체 메시지를 보낸다(진짜 정시 발송).
         # 내부 schedule은 백업이라, 외부 크론이 이미 정상적으로 보냈으면(오늘자 공고가 전부
@@ -44,12 +47,14 @@ jobs:
             python test_g2b_api.py notify 용역
           fi
 
-      # data/notifier.db(중복 발송 방지용 상태)를 repo에 커밋해서 다음 실행에서도 이어서 쓴다.
-      # GitHub Actions엔 영구 서버가 없어서, DB 파일 자체를 git으로 버전관리하는 방식으로 상태를 유지한다.
-      - name: Commit updated notifier DB
+      # data/notifier.db(중복 발송 방지용 상태) + docs/index.html(대시보드)를 repo에 커밋해서
+      # 다음 실행에서도 이어서 쓰고, 대시보드도 매일 최신 상태로 유지한다.
+      # GitHub Actions엔 영구 서버가 없어서, 파일 자체를 git으로 버전관리하는 방식으로 상태를 유지한다.
+      - name: Commit updated notifier DB and dashboard
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/notifier.db
-          git diff --cached --quiet && echo "No DB changes to commit" || git commit -m "chore: update notifier db [skip ci]"
+          [ -f docs/index.html ] && git add docs/index.html
+          git diff --cached --quiet && echo "No changes to commit" || git commit -m "chore: update notifier db + dashboard [skip ci]"
           git push

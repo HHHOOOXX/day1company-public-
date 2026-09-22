@@ -1,0 +1,833 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>AX사업기획실 공고목록</title>
+<style>
+  :root {
+    --bg: #F5F6F8; --card-bg: #FFFFFF; --border: #E3E5E9;
+    --text-primary: #17181C; --text-secondary: #5B5F68; --text-tertiary: #9298A2;
+    --accent: #2F6FED; --accent-soft: #EAF1FF;
+    --warn-bg: #FFF4E0; --warn-border: #F0D08A; --warn-text: #7A5300;
+    --danger-bg: #FDECEC; --danger-border: #F3B4B4; --danger-text: #9B2C2C;
+    --ok-bg: #E7F7EE; --ok-text: #1E7B45;
+    --src-bid-bg: #E8EEFD; --src-bid-text: #2A4FB0;
+    --src-prespec-bg: #F2E9FC; --src-prespec-text: #6B3FA0;
+    --src-bizinfo-bg: #E4F6EC; --src-bizinfo-text: #1E7B45;
+    --dday-urgent: #D8352B; --dday-soon: #C97A0A; --dday-normal: #5B5F68; --dday-passed: #ABB0B8;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; background: var(--bg); color: var(--text-primary);
+    font-family: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .page { max-width: 1400px; margin: 0 auto; padding: 18px 20px 60px; }
+  .top-banner {
+    background: var(--accent-soft); border: 1px solid #CBDCFB; color: #1D4AA8; border-radius: 10px;
+    font-size: 13px; padding: 9px 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px;
+  }
+  .top-banner b { font-weight: 800; }
+  .top-banner .dot { opacity: .5; }
+  .warn-note {
+    background: var(--danger-bg); border: 1px solid var(--danger-border); color: var(--danger-text);
+    font-size: 13px; padding: 8px 16px; font-weight: 700; border-radius: 10px; margin-bottom: 14px;
+  }
+  .page-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+  .page-head h1 { font-size: 20px; margin: 0; font-weight: 900; }
+  .page-head .period { color: var(--text-secondary); font-size: 13px; }
+  .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .stat-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .stat-card .num { font-size: 22px; font-weight: 900; line-height: 1.2; }
+  .stat-card .lbl { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  .stat-card.accent .num { color: var(--accent); }
+  .stat-card.warn .num { color: var(--warn-text); }
+  .stat-card.danger .num { color: var(--dday-urgent); }
+  .legend-note {
+    background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn-text);
+    font-size: 12.5px; padding: 9px 16px; border-radius: 10px; margin-bottom: 14px; line-height: 1.6;
+  }
+  .legend-note b { font-weight: 800; }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .filter-group { display: flex; gap: 4px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 3px; }
+  .filter-btn { border: none; background: transparent; color: var(--text-secondary); font-size: 12.5px; font-weight: 700; padding: 6px 11px; border-radius: 6px; cursor: pointer; }
+  .filter-btn:hover { background: var(--bg); }
+  .filter-btn.active { background: var(--accent); color: #fff; }
+  .search-box { flex: 1 1 220px; max-width: 320px; }
+  .search-box input {
+    width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; font-size: 13px;
+    background: var(--card-bg); color: var(--text-primary);
+  }
+  .search-box input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .result-count { color: var(--text-tertiary); font-size: 12.5px; margin-left: auto; }
+  .table-wrap { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; overflow: auto; max-height: 78vh; }
+  table { border-collapse: collapse; width: 100%; min-width: 1080px; font-size: 13px; }
+  thead th {
+    position: sticky; top: 0; background: #FAFBFC; border-bottom: 1px solid var(--border); z-index: 1;
+    text-align: left; padding: 10px 10px; font-size: 12px; color: var(--text-secondary); font-weight: 800;
+    white-space: nowrap; cursor: pointer; user-select: none;
+  }
+  thead th:hover { color: var(--text-primary); }
+  thead th.sorted-asc::after { content: " \25B2"; font-size: 9px; }
+  thead th.sorted-desc::after { content: " \25BC"; font-size: 9px; }
+  tbody td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; line-height: 1.5; }
+  tbody tr:hover { background: #FAFBFF; }
+  tbody tr.is-hidden { display: none; }
+  .col-idx { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+  .col-org { font-weight: 800; white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+  .col-title { min-width: 260px; }
+  .col-budget, .col-method, .col-posted, .col-codes { white-space: nowrap; color: var(--text-secondary); }
+  .row-reason { color: var(--warn-text); font-size: 11.5px; margin-top: 3px; font-style: italic; }
+  .src-chip { font-size: 10.5px; font-weight: 800; padding: 2px 7px; border-radius: 8px; white-space: nowrap; }
+  .src-bid { background: var(--src-bid-bg); color: var(--src-bid-text); }
+  .src-prespec { background: var(--src-prespec-bg); color: var(--src-prespec-text); }
+  .src-bizinfo { background: var(--src-bizinfo-bg); color: var(--src-bizinfo-text); }
+  .area-chip { display: inline-block; background: #F0F1F4; color: #4A4E57; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 7px; margin: 1px 3px 1px 0; white-space: nowrap; }
+  .induty-chip { display: inline-block; background: #EAF1FF; color: #2A4FB0; font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 7px; margin-left: 5px; cursor: help; }
+  .fit-chip { font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 8px; white-space: nowrap; display: inline-block; }
+  .fit-include { background: var(--ok-bg); color: var(--ok-text); }
+  .fit-review { background: var(--warn-bg); color: var(--warn-text); border: 1px solid var(--warn-border); }
+  .fit-star { background: #FFF4CC; color: #8A6D00; border: 1px solid #E8C34A; margin-right: 4px; cursor: help; }
+  .fit-codes { background: #E3F2FD; color: #0D47A1; border: 1px solid #90CAF9; margin-right: 4px; cursor: help; }
+  .code-chip { display: inline-block; background: #E3F2FD; color: #0D47A1; border: 1px solid #90CAF9; font-size: 11px; font-weight: 800; padding: 1px 7px; border-radius: 7px; cursor: help; font-variant-numeric: tabular-nums; margin: 1px 3px 1px 0; }
+  .code-empty { color: var(--text-tertiary); }
+  .dday-badge { font-weight: 800; font-size: 12.5px; white-space: nowrap; }
+  .dday-urgent { color: var(--dday-urgent); }
+  .dday-soon { color: var(--dday-soon); }
+  .dday-normal { color: var(--dday-normal); }
+  .dday-passed { color: var(--dday-passed); }
+  .dday-unknown { color: var(--text-tertiary); }
+  .deadline-label { font-size: 10.5px; color: var(--text-tertiary); margin-top: 1px; }
+  .empty-state { text-align: center; color: var(--text-tertiary); padding: 40px 0; font-size: 13.5px; }
+  @media (max-width: 760px) {
+    .page { padding: 14px 12px 40px; }
+  }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap">
+
+<div class="page">
+  <div class="top-banner">
+    <span>🔎 <b>로컬 미리보기</b></span>
+    <span class="dot">&middot;</span>
+    <span>실제로 Slack에 발송되지 않았습니다</span>
+    <span class="dot">&middot;</span>
+    <span>기준일: 2026-09-17 게시/등록분</span>
+  </div>
+  <div class="warn-note">⚠️ 일부 데이터 수집 실패<div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01734441-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01734476-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01733482-001 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01734525-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01734086-004 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01734391-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01734623-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01733104-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01734706-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01734712-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01734749-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01734794-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01734892-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01734964-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01734990-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01735031-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01735147-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01735177-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01735242-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01735449-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01723171-002 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 결과코드 None/None (4회 재시도 소진)</div><div>- 업종제한 조회 실패: R26BK01735549-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 시간 상한 초과로 재시도 중단</div><div>- 업종제한 조회 실패: R26BK01735519-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoPrtcptPsblRgn: 시간 상한 초과로 재시도 중단</div><div>- 지역제한 조회 실패: R26BK01735519-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 시간 상한 초과로 재시도 중단</div><div>- 업종제한 조회 실패: R26BK01735617-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoPrtcptPsblRgn: 시간 상한 초과로 재시도 중단</div><div>- 지역제한 조회 실패: R26BK01735617-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 시간 상한 초과로 재시도 중단</div><div>- 업종제한 조회 실패: R26BK01735601-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoPrtcptPsblRgn: 시간 상한 초과로 재시도 중단</div><div>- 지역제한 조회 실패: R26BK01735601-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 시간 상한 초과로 재시도 중단</div><div>- 업종제한 조회 실패: R26BK01735630-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoPrtcptPsblRgn: 시간 상한 초과로 재시도 중단</div><div>- 지역제한 조회 실패: R26BK01735630-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 시간 상한 초과로 재시도 중단</div><div>- 업종제한 조회 실패: R26BK01735648-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoPrtcptPsblRgn: 시간 상한 초과로 재시도 중단</div><div>- 지역제한 조회 실패: R26BK01735648-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 시간 상한 초과로 재시도 중단</div><div>- 업종제한 조회 실패: R26BK01735613-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoPrtcptPsblRgn: 시간 상한 초과로 재시도 중단</div><div>- 지역제한 조회 실패: R26BK01735613-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 시간 상한 초과로 재시도 중단</div><div>- 업종제한 조회 실패: R26BK01734601-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoPrtcptPsblRgn: 시간 상한 초과로 재시도 중단</div><div>- 지역제한 조회 실패: R26BK01734601-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 시간 상한 초과로 재시도 중단</div><div>- 업종제한 조회 실패: R26BK01735032-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoPrtcptPsblRgn: 시간 상한 초과로 재시도 중단</div><div>- 지역제한 조회 실패: R26BK01735032-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 시간 상한 초과로 재시도 중단</div><div>- 업종제한 조회 실패: R26BK01735688-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoPrtcptPsblRgn: 시간 상한 초과로 재시도 중단</div><div>- 지역제한 조회 실패: R26BK01735688-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 시간 상한 초과로 재시도 중단</div><div>- 업종제한 조회 실패: R26BK01734751-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoPrtcptPsblRgn: 시간 상한 초과로 재시도 중단</div><div>- 지역제한 조회 실패: R26BK01734751-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 시간 상한 초과로 재시도 중단</div><div>- 업종제한 조회 실패: R26BK01735708-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoPrtcptPsblRgn: 시간 상한 초과로 재시도 중단</div><div>- 지역제한 조회 실패: R26BK01735708-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 시간 상한 초과로 재시도 중단</div><div>- 업종제한 조회 실패: R26BK01733845-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoPrtcptPsblRgn: 시간 상한 초과로 재시도 중단</div><div>- 지역제한 조회 실패: R26BK01733845-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 시간 상한 초과로 재시도 중단</div><div>- 업종제한 조회 실패: R26BK01735960-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoPrtcptPsblRgn: 시간 상한 초과로 재시도 중단</div><div>- 지역제한 조회 실패: R26BK01735960-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoLicenseLimit: 시간 상한 초과로 재시도 중단</div><div>- 업종제한 조회 실패: R26BK01735803-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getBidPblancListInfoPrtcptPsblRgn: 시간 상한 초과로 재시도 중단</div><div>- 지역제한 조회 실패: R26BK01735803-000 (판정 보류, 일단 포함 — 직접 확인 필요)</div><div>- getPublicPrcureThngInfoServc: 시간 상한 초과로 1페이지부터 중단 (일부 공고 누락 가능)</div><div>- 기업마당 1페이지: 시간 상한 초과로 재시도 중단</div></div>
+
+  <div class="page-head">
+    <h1>📋 AX사업기획실 공고목록</h1>
+    <span class="period">2026-09-17 기준 · 총 44건</span>
+  </div>
+
+  <div class="stat-row">
+    <div class="stat-card"><div class="num">44</div><div class="lbl">전체 건수</div></div>
+    <div class="stat-card accent"><div class="num">3</div><div class="lbl">✅ 확실포함</div></div>
+    <div class="stat-card warn"><div class="num">41</div><div class="lbl">⚠ 확인필요</div></div>
+    <div class="stat-card danger"><div class="num">0</div><div class="lbl">🔥 마감 3일 이내</div></div>
+  </div>
+
+  <div class="legend-note"><b>⚠ 확인필요 판단기준</b> — ① 발주기관이 대학교/지자체 핵심군이 아닌 공공기관 성격(공사·공단·협회·연구원 등) ② 제목이 '운영/교육' 같은 범용 단어로만 매칭돼 실제 교육·콘텐츠 사업인지 불확실 ③ 업종제한 조회 실패로 참가가능 여부 미확정 — 사유는 용역명 아래 붉은 글씨로 표시됩니다.</div>
+
+  <div class="toolbar">
+    <div class="filter-group" data-filter-group="source">
+      <button class="filter-btn active" data-source="all">전체</button>
+      <button class="filter-btn" data-source="bid">입찰공고</button>
+      <button class="filter-btn" data-source="pre_spec">사전규격</button>
+      <button class="filter-btn" data-source="bizinfo">기업마당</button>
+    </div>
+    <div class="filter-group" data-filter-group="tier">
+      <button class="filter-btn active" data-tier="all">전체</button>
+      <button class="filter-btn" data-tier="include">✅ 확실포함</button>
+      <button class="filter-btn" data-tier="review">⚠ 확인필요</button>
+    </div>
+    <div class="search-box">
+      <input type="text" id="searchInput" placeholder="발주기관/용역명 검색">
+    </div>
+    <span class="result-count" id="resultCount"></span>
+  </div>
+
+  <div class="table-wrap">
+    <table id="dataTable">
+      <thead>
+        <tr>
+          <th data-key="idx" data-type="num">#</th>
+          <th data-key="source" data-type="text">구분</th>
+          <th data-key="org" data-type="text">발주기관</th>
+          <th data-key="title" data-type="text">용역명</th>
+          <th data-key="area" data-type="text">사업영역</th>
+          <th data-key="budget" data-type="num">예산</th>
+          <th data-key="method" data-type="text">계약방법</th>
+          <th data-key="codes" data-type="text">업종코드 확인</th>
+          <th data-key="posted" data-type="text">게시일</th>
+          <th data-key="deadline" data-type="text" class="sorted-asc">마감</th>
+          <th data-key="fit" data-type="text">적합성</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-17" data-budget="55000000" data-search="협성대학교 협성대학교 기초학력진단 및 ai 기반 개인 맞춤형 학습지원 시스템 구축 용역 입찰(긴급)">
+  <td class="col-idx">1</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">협성대학교</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01726311&amp;bidPbancOrd=001" target="_blank" rel="noopener">협성대학교 기초학력진단 및 AI 기반 개인 맞춤형 학습지원 시스템 구축 용역 입찰(긴급)</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">컨설팅</span></td>
+  <td class="col-budget">5,500만원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-chip" title="업종제한사항(입찰공고) 또는 제안요청서 원문(사전규격)에서 확인된 보유 업종코드">1469</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-passed">9/17 마감</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-22" data-budget="300000000" data-search="한양대학교 에리카산학협력단 한양대학교 erica 로봇직업교육센터 legacy 로봇–휴머노이드 멀티로봇 공정 구축 용역">
+  <td class="col-idx">2</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">한양대학교 에리카산학협력단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735177&amp;bidPbancOrd=000" target="_blank" rel="noopener">한양대학교 ERICA 로봇직업교육센터 Legacy 로봇–휴머노이드 멀티로봇 공정 구축 용역</a><div class="row-reason">업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">3억원</td>
+  <td class="col-method">일반경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-soon">9/22 (D-4)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-star" title="과거 수주: 한양대 / 청년도약 인재양성 부트캠프 (AI 구독)">⭐ 확실후보</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-23" data-budget="30000000" data-search="경성대학교 직속기관 산학협력단 경성대학교 글로벌 e스포츠 실무 교육 및 k-mega  글로컬 e스포츠 대회 지원 운영 위탁 용역 입찰 (긴급) 재공고">
+  <td class="col-idx">3</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">경성대학교 직속기관 산학협력단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734601&amp;bidPbancOrd=000" target="_blank" rel="noopener">경성대학교 글로벌 e스포츠 실무 교육 및 K-MEGA  글로컬 e스포츠 대회 지원 운영 위탁 용역 입찰 (긴급) 재공고</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요 / 지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">3,000만원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-soon">9/23 (D-5)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-23" data-budget="55000000" data-search="협성대학교 [대학혁신지원사업]협성대학교 기초학력진단 및 ai 기반 개인 맞춤형 학습지원 시스템 구축 용역 입찰(긴급)">
+  <td class="col-idx">4</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">협성대학교</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735688&amp;bidPbancOrd=000" target="_blank" rel="noopener">[대학혁신지원사업]협성대학교 기초학력진단 및 AI 기반 개인 맞춤형 학습지원 시스템 구축 용역 입찰(긴급)</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요 / 지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">전략수립</span><span class="area-chip">컨설팅</span></td>
+  <td class="col-budget">5,500만원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-soon">9/23 (D-5)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-28" data-budget="190000000" data-search="한국과학기술정보연구원 군 장병 맞춤형 ai 교육 서비스 개발">
+  <td class="col-idx">5</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">한국과학기술정보연구원</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734476&amp;bidPbancOrd=000" target="_blank" rel="noopener">군 장병 맞춤형 AI 교육 서비스 개발</a><div class="row-reason">발주기관 유형이 대학교/지자체 핵심군이 아님(공사/공단/협회/연구원 등) — 실제 사업 대상인지 확인 필요 / 제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">콘텐츠 기획·개발·제작</span></td>
+  <td class="col-budget">1.9억원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/28 (D-10)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-28" data-budget="80000000" data-search="재단법인 광주정보.문화산업진흥원 지역 콘텐츠 ip 활성화 프로그램 운영">
+  <td class="col-idx">6</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">재단법인 광주정보.문화산업진흥원</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734712&amp;bidPbancOrd=000" target="_blank" rel="noopener">지역 콘텐츠 IP 활성화 프로그램 운영</a><div class="row-reason">업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">콘텐츠 기획·개발·제작</span></td>
+  <td class="col-budget">8,000만원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/28 (D-10)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-28" data-budget="500000000" data-search="재단법인 충주문화관광재단 [긴급] (재공고)충주본색 미디어아트 도큐멘타 총괄 운영 용역">
+  <td class="col-idx">7</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">재단법인 충주문화관광재단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735708&amp;bidPbancOrd=000" target="_blank" rel="noopener">[긴급] (재공고)충주본색 미디어아트 도큐멘타 총괄 운영 용역</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요 / 지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">5억원</td>
+  <td class="col-method">일반경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/28 (D-10)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-28" data-budget="51000000" data-search="부산과학기술대학교 산학협력단 dx-spark 2040 직무교육(제조·생산 데이터 기반 의사결정 및 esg 경영 특화) 운영">
+  <td class="col-idx">8</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">부산과학기술대학교 산학협력단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735960&amp;bidPbancOrd=000" target="_blank" rel="noopener">DX-SPARK 2040 직무교육(제조·생산 데이터 기반 의사결정 및 ESG 경영 특화) 운영</a><div class="row-reason">업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요 / 지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">5,100만원</td>
+  <td class="col-method">제한경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/28 (D-10)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-29" data-budget="65000000" data-search="국세청 2026년 자본거래 전문인력 양성 위탁교육">
+  <td class="col-idx">9</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">국세청</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01733482&amp;bidPbancOrd=001" target="_blank" rel="noopener">2026년 자본거래 전문인력 양성 위탁교육</a><div class="row-reason">업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">6,500만원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/29 (D-11)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-29" data-budget="20000000" data-search="서정대학 산학협력단 2026년 초등학교 방과후 프로그램 공급사업 교육·성과자료 제작 용역 ">
+  <td class="col-idx">10</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">서정대학 산학협력단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734623&amp;bidPbancOrd=000" target="_blank" rel="noopener">2026년 초등학교 방과후 프로그램 공급사업 교육·성과자료 제작 용역 </a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">콘텐츠 기획·개발·제작</span></td>
+  <td class="col-budget">2,000만원</td>
+  <td class="col-method">일반경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/29 (D-11)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-29" data-budget="79995000" data-search="재단법인 경북테크노파크 지스타 2026 경북 공동관 운영 용역">
+  <td class="col-idx">11</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">재단법인 경북테크노파크</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734706&amp;bidPbancOrd=000" target="_blank" rel="noopener">지스타 2026 경북 공동관 운영 용역</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">7,999만원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/29 (D-11)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-29" data-budget="120000000" data-search="재단법인전남테크노파크 the bridge 전남광주 2026 해외바이어 발굴초청 및 비즈니스 상담회 운영 용역">
+  <td class="col-idx">12</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">재단법인전남테크노파크</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734749&amp;bidPbancOrd=000" target="_blank" rel="noopener">The Bridge 전남광주 2026 해외바이어 발굴초청 및 비즈니스 상담회 운영 용역</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">1.2억원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/29 (D-11)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-29" data-budget="80000000" data-search="한국과학기술정보연구원 이기종 양자암호통신망 시험환경 구축·운영 및 양자암호 서비스화 검증 지원">
+  <td class="col-idx">13</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">한국과학기술정보연구원</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734794&amp;bidPbancOrd=000" target="_blank" rel="noopener">이기종 양자암호통신망 시험환경 구축·운영 및 양자암호 서비스화 검증 지원</a><div class="row-reason">발주기관 유형이 대학교/지자체 핵심군이 아님(공사/공단/협회/연구원 등) — 실제 사업 대상인지 확인 필요 / 제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">8,000만원</td>
+  <td class="col-method">제한경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/29 (D-11)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-29" data-budget="170000000" data-search="한국과학기술정보연구원 군 장병 맞춤형 ai교육 플랫폼 운영 및 환류 체계 구축">
+  <td class="col-idx">14</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">한국과학기술정보연구원</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734892&amp;bidPbancOrd=000" target="_blank" rel="noopener">군 장병 맞춤형 AI교육 플랫폼 운영 및 환류 체계 구축</a><div class="row-reason">발주기관 유형이 대학교/지자체 핵심군이 아님(공사/공단/협회/연구원 등) — 실제 사업 대상인지 확인 필요 / 제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">1.7억원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/29 (D-11)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-29" data-budget="220000000" data-search="한국과학기술정보연구원 인공지능 데이터분석 pbl 콘텐츠 제작">
+  <td class="col-idx">15</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">한국과학기술정보연구원</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734964&amp;bidPbancOrd=000" target="_blank" rel="noopener">인공지능 데이터분석 PBL 콘텐츠 제작</a><div class="row-reason">발주기관 유형이 대학교/지자체 핵심군이 아님(공사/공단/협회/연구원 등) — 실제 사업 대상인지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">콘텐츠 기획·개발·제작</span></td>
+  <td class="col-budget">2.2억원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/29 (D-11)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-29" data-budget="399791763" data-search="한국로봇산업진흥원 2026년 로봇 공공수요 발굴단 운영 및 과제 기획 용역">
+  <td class="col-idx">16</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">한국로봇산업진흥원</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735147&amp;bidPbancOrd=000" target="_blank" rel="noopener">2026년 로봇 공공수요 발굴단 운영 및 과제 기획 용역</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">콘텐츠 기획·개발·제작</span></td>
+  <td class="col-budget">4억원</td>
+  <td class="col-method">일반경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/29 (D-11)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-29" data-budget="36989210" data-search="한국로봇산업진흥원 sdr 이기종 로봇 통합 서비스 플랫폼관 구축·운영 용역">
+  <td class="col-idx">17</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">한국로봇산업진흥원</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735242&amp;bidPbancOrd=000" target="_blank" rel="noopener">SDR 이기종 로봇 통합 서비스 플랫폼관 구축·운영 용역</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">3,698만원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/29 (D-11)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-29" data-budget="70000000" data-search="한국화학연구원 국가 ccu 인증센터 제도 운영 홈페이지 구축">
+  <td class="col-idx">18</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">한국화학연구원</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735630&amp;bidPbancOrd=000" target="_blank" rel="noopener">국가 CCU 인증센터 제도 운영 홈페이지 구축</a><div class="row-reason">발주기관 유형이 대학교/지자체 핵심군이 아님(공사/공단/협회/연구원 등) — 실제 사업 대상인지 확인 필요 / 제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요 / 지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">7,000만원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/29 (D-11)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-30" data-budget="150000000" data-search="영남대학교 [앵커]경북형 앵커 혁신 특구 기반 ai 인재 혁신대학 조성 및 확산 전략 연구 용역">
+  <td class="col-idx">19</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">영남대학교</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01732268&amp;bidPbancOrd=001" target="_blank" rel="noopener">[앵커]경북형 앵커 혁신 특구 기반 AI 인재 혁신대학 조성 및 확산 전략 연구 용역</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">연구·조사·성과분석</span></td>
+  <td class="col-budget">1.5억원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-chip" title="업종제한사항(입찰공고) 또는 제안요청서 원문(사전규격)에서 확인된 보유 업종코드">1169</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/30 (D-12)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="include" data-deadline="2026-09-30" data-budget="50000000" data-search="부경대학교 2026학년도 국립부경대학교 모듈형 트랙 교육과정 진로목표 및 전공능력 연계체계 진단 사업">
+  <td class="col-idx">20</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">부경대학교</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734207&amp;bidPbancOrd=000" target="_blank" rel="noopener">2026학년도 국립부경대학교 모듈형 트랙 교육과정 진로목표 및 전공능력 연계체계 진단 사업</a></td>
+  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">컨설팅</span></td>
+  <td class="col-budget">5,000만원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-chip" title="업종제한사항(입찰공고) 또는 제안요청서 원문(사전규격)에서 확인된 보유 업종코드">1169</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/30 (D-12)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-include">✅ 확실포함</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-30" data-budget="7561505762" data-search="조달청 대전지방조달청 기초과학연구원 본원, kaist 캠퍼스, postech 캠퍼스 청소 및 경비 용역">
+  <td class="col-idx">21</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">조달청 대전지방조달청</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01733104&amp;bidPbancOrd=000" target="_blank" rel="noopener">기초과학연구원 본원, KAIST 캠퍼스, POSTECH 캠퍼스 청소 및 경비 용역</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">연구·조사·성과분석</span></td>
+  <td class="col-budget">75.6억원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/30 (D-12)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-30" data-budget="30000000" data-search="한국산업인력공단 글로벌숙련기술진흥원 캄보디아 해외 이주노동자 db 및 ai 기반 재통합 지원 체계 구축 사업 사전 타당성 조사 연구용역">
+  <td class="col-idx">22</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">한국산업인력공단 글로벌숙련기술진흥원</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735549&amp;bidPbancOrd=000" target="_blank" rel="noopener">캄보디아 해외 이주노동자 DB 및 AI 기반 재통합 지원 체계 구축 사업 사전 타당성 조사 연구용역</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">연구·조사·성과분석</span></td>
+  <td class="col-budget">3,000만원</td>
+  <td class="col-method">제한경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/30 (D-12)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-09-30" data-budget="87536522" data-search="한국지능정보사회진흥원 ai 빅데이터 분석기반 보훈심사 지원시스템 구축 개인정보 영향평가">
+  <td class="col-idx">23</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">한국지능정보사회진흥원</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734751&amp;bidPbancOrd=000" target="_blank" rel="noopener">AI 빅데이터 분석기반 보훈심사 지원시스템 구축 개인정보 영향평가</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요 / 지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area">-</td>
+  <td class="col-budget">8,753만원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">9/30 (D-12)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-10-01" data-budget="35000000" data-search="조선간호대학교 2026학년도 조선간호대학교 미래 신산업 환경 및 교육수요 분석">
+  <td class="col-idx">24</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">조선간호대학교</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734251&amp;bidPbancOrd=000" target="_blank" rel="noopener">2026학년도 조선간호대학교 미래 신산업 환경 및 교육수요 분석</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">3,500만원</td>
+  <td class="col-method">제한경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">10/1 (D-13)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="include" data-deadline="2026-10-02" data-budget="43800000" data-search="경희대학교산학협력단 [제2026-국제산학26호] 2026학년도 그린바이오 혁신융합대학사업단 온라인 교과목 콘텐츠 제작 용역">
+  <td class="col-idx">25</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">경희대학교산학협력단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01733984&amp;bidPbancOrd=000" target="_blank" rel="noopener">[제2026-국제산학26호] 2026학년도 그린바이오 혁신융합대학사업단 온라인 교과목 콘텐츠 제작 용역</a></td>
+  <td class="col-area"><span class="area-chip">콘텐츠 기획·개발·제작</span></td>
+  <td class="col-budget">4,380만원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-chip" title="업종제한사항(입찰공고) 또는 제안요청서 원문(사전규격)에서 확인된 보유 업종코드">1469</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">10/2 (D-14)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-include">✅ 확실포함</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-10-02" data-budget="243437940" data-search="조달청 부산지방조달청 울산항 정보공유 ai 서비스 구축 poc 용역">
+  <td class="col-idx">26</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">조달청 부산지방조달청</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01732564&amp;bidPbancOrd=000" target="_blank" rel="noopener">울산항 정보공유 AI 서비스 구축 PoC 용역</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요</div></td>
+  <td class="col-area">-</td>
+  <td class="col-budget">2.4억원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-chip" title="업종제한사항(입찰공고) 또는 제안요청서 원문(사전규격)에서 확인된 보유 업종코드">1468</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">10/2 (D-14)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-10-02" data-budget="200000000" data-search="한국정보통신기술협회 ai반도체 기반 ax 디바이스 기술․사업화 조사 분석 및 컨설팅 용역">
+  <td class="col-idx">27</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">한국정보통신기술협회</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735613&amp;bidPbancOrd=000" target="_blank" rel="noopener">AI반도체 기반 AX 디바이스 기술․사업화 조사 분석 및 컨설팅 용역</a><div class="row-reason">발주기관 유형이 대학교/지자체 핵심군이 아님(공사/공단/협회/연구원 등) — 실제 사업 대상인지 확인 필요 / 제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요 / 지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">연구·조사·성과분석</span><span class="area-chip">컨설팅</span></td>
+  <td class="col-budget">2억원</td>
+  <td class="col-method">일반경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">10/2 (D-14)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-10-12" data-budget="570000000" data-search="재단법인 충주문화관광재단 대한민국 문화도시 충주 융복합 문화콘텐츠 창제작 지원사업 [the next show ii] 운영 대행 용역">
+  <td class="col-idx">28</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">재단법인 충주문화관광재단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735648&amp;bidPbancOrd=000" target="_blank" rel="noopener">대한민국 문화도시 충주 융복합 문화콘텐츠 창제작 지원사업 [THE NEXT SHOW II] 운영 대행 용역</a><div class="row-reason">업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요 / 지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">콘텐츠 기획·개발·제작</span></td>
+  <td class="col-budget">5.7억원</td>
+  <td class="col-method">일반경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">10/12 (D-24)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-10-21" data-budget="4572418600" data-search="조달청 국가고용전산망 사이버보안관제센터 운영지원 사업">
+  <td class="col-idx">29</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">조달청</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735032&amp;bidPbancOrd=000" target="_blank" rel="noopener">국가고용전산망 사이버보안관제센터 운영지원 사업</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요 / 지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">45.7억원</td>
+  <td class="col-method">일반경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">10/21 (D-33)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-11-27" data-budget="969922800" data-search="한국지역난방공사 (사업추진계획공고)광주전남 집단에너지사업 사후환경영향조사(운영시 4차) 용역">
+  <td class="col-idx">30</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">한국지역난방공사</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734990&amp;bidPbancOrd=000" target="_blank" rel="noopener">(사업추진계획공고)광주전남 집단에너지사업 사후환경영향조사(운영시 4차) 용역</a><div class="row-reason">발주기관 유형이 대학교/지자체 핵심군이 아님(공사/공단/협회/연구원 등) — 실제 사업 대상인지 확인 필요 / 제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">연구·조사·성과분석</span></td>
+  <td class="col-budget">9.7억원</td>
+  <td class="col-method">일반경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">11/27 (D-70)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-11-27" data-budget="837899700" data-search="한국지역난방공사 (사업추진계획공고)청주 친환경에너지 개선공사 사후환경영향조사(운영시 2차) 용역">
+  <td class="col-idx">31</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">한국지역난방공사</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735031&amp;bidPbancOrd=000" target="_blank" rel="noopener">(사업추진계획공고)청주 친환경에너지 개선공사 사후환경영향조사(운영시 2차) 용역</a><div class="row-reason">발주기관 유형이 대학교/지자체 핵심군이 아님(공사/공단/협회/연구원 등) — 실제 사업 대상인지 확인 필요 / 제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">연구·조사·성과분석</span></td>
+  <td class="col-budget">8.4억원</td>
+  <td class="col-method">일반경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">11/27 (D-70)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="9999-99-99" data-budget="40000000" data-search="사단법인 한국정보통신진흥협회 ai청년창업기업 동반성장 바우처 지원사업 성과 및 만족도조사">
+  <td class="col-idx">32</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">사단법인 한국정보통신진흥협회</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01733894&amp;bidPbancOrd=000" target="_blank" rel="noopener">AI청년창업기업 동반성장 바우처 지원사업 성과 및 만족도조사</a><div class="row-reason">발주기관 유형이 대학교/지자체 핵심군이 아님(공사/공단/협회/연구원 등) — 실제 사업 대상인지 확인 필요 / 제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">연구·조사·성과분석</span></td>
+  <td class="col-budget">4,000만원</td>
+  <td class="col-method">일반경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-unknown">미정</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="9999-99-99" data-budget="30000000" data-search="사단법인 한국정보통신진흥협회 ai청년창업기업 동반성장 바우처 지원사업 우수성과 발굴">
+  <td class="col-idx">33</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">사단법인 한국정보통신진흥협회</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01733921&amp;bidPbancOrd=000" target="_blank" rel="noopener">AI청년창업기업 동반성장 바우처 지원사업 우수성과 발굴</a><div class="row-reason">발주기관 유형이 대학교/지자체 핵심군이 아님(공사/공단/협회/연구원 등) — 실제 사업 대상인지 확인 필요 / 제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요</div></td>
+  <td class="col-area">-</td>
+  <td class="col-budget">3,000만원</td>
+  <td class="col-method">일반경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-unknown">미정</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="9999-99-99" data-budget="120000000" data-search="한서대학교 산학협력단 한서대학교 글로컬대학사업단(앵커사업부) 2026년 한서대-태안군 특화 교육 생태계 구축 용역 통합 공고">
+  <td class="col-idx">34</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">한서대학교 산학협력단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01733967&amp;bidPbancOrd=000" target="_blank" rel="noopener">한서대학교 글로컬대학사업단(앵커사업부) 2026년 한서대-태안군 특화 교육 생태계 구축 용역 통합 공고</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">1.2억원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-chip" title="업종제한사항(입찰공고) 또는 제안요청서 원문(사전규격)에서 확인된 보유 업종코드">1169</span><span class="code-chip" title="업종제한사항(입찰공고) 또는 제안요청서 원문(사전규격)에서 확인된 보유 업종코드">9999</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-unknown">미정</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="include" data-deadline="9999-99-99" data-budget="1100" data-search="경북보건대학교 산학협력단 특성화고 스마트물류 인재양성 온라인 콘텐츠 제작">
+  <td class="col-idx">35</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">경북보건대학교 산학협력단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734002&amp;bidPbancOrd=000" target="_blank" rel="noopener">특성화고 스마트물류 인재양성 온라인 콘텐츠 제작</a></td>
+  <td class="col-area"><span class="area-chip">콘텐츠 기획·개발·제작</span></td>
+  <td class="col-budget">1,100원</td>
+  <td class="col-method">일반경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-unknown">미정</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-include">✅ 확실포함</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="9999-99-99" data-budget="70000000" data-search="선문대학교 산학협력단 선문대학교 산학협력단 2026 위험사회-글로벌공생 연합 융합캠프 운영 용역">
+  <td class="col-idx">36</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">선문대학교 산학협력단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734525&amp;bidPbancOrd=000" target="_blank" rel="noopener">선문대학교 산학협력단 2026 위험사회-글로벌공생 연합 융합캠프 운영 용역</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">7,000만원</td>
+  <td class="col-method">일반경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-unknown">미정</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="9999-99-99" data-budget="77000000" data-search="선문대학교 산학협력단 아산시 개방형 온라인 교육 플랫폼 고도화 사업 및 외국인 주민을 위한 ai 지원 용역">
+  <td class="col-idx">37</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">선문대학교 산학협력단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01734086&amp;bidPbancOrd=004" target="_blank" rel="noopener">아산시 개방형 온라인 교육 플랫폼 고도화 사업 및 외국인 주민을 위한 AI 지원 용역</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">컨설팅</span></td>
+  <td class="col-budget">7,700만원</td>
+  <td class="col-method">일반경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-unknown">미정</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="9999-99-99" data-budget="1" data-search="경기대학교 (재공고) 경기대학교 수원캠퍼스 제2복지관 구내서점 운영사업자 선정 입찰">
+  <td class="col-idx">38</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">경기대학교</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735449&amp;bidPbancOrd=000" target="_blank" rel="noopener">(재공고) 경기대학교 수원캠퍼스 제2복지관 구내서점 운영사업자 선정 입찰</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">1원</td>
+  <td class="col-method">제한경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-unknown">미정</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="9999-99-99" data-budget="55000000" data-search="성균관대학교 자연과학캠퍼스 부총장 산학협력단 tex-corps 실험실창업혁신단 2026탐색팀 진단 및 심화멘토링">
+  <td class="col-idx">39</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">성균관대학교 자연과학캠퍼스 부총장 산학협력단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01723171&amp;bidPbancOrd=002" target="_blank" rel="noopener">TeX-Corps 실험실창업혁신단 2026탐색팀 진단 및 심화멘토링</a><div class="row-reason">업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">컨설팅</span></td>
+  <td class="col-budget">5,500만원</td>
+  <td class="col-method">일반경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-unknown">미정</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="9999-99-99" data-budget="69674000" data-search="재단법인 경상남도 관광재단 (재공고)「지리산권 esg 가치여행 특화상품 육성」esg 가치여행 인증 플랫폼 운영 용역">
+  <td class="col-idx">40</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">재단법인 경상남도 관광재단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735519&amp;bidPbancOrd=000" target="_blank" rel="noopener">(재공고)「지리산권 ESG 가치여행 특화상품 육성」ESG 가치여행 인증 플랫폼 운영 용역</a><div class="row-reason">업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요 / 지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">6,967만원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-unknown">미정</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="9999-99-99" data-budget="27000000" data-search="대구대학교 산학협력단 2026 경산교육발전특구 성과공유 컨퍼런스 운영 용역">
+  <td class="col-idx">41</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">대구대학교 산학협력단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735617&amp;bidPbancOrd=000" target="_blank" rel="noopener">2026 경산교육발전특구 성과공유 컨퍼런스 운영 용역</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요 / 지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span></td>
+  <td class="col-budget">2,700만원</td>
+  <td class="col-method">일반경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-unknown">미정</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="9999-99-99" data-budget="44000000" data-search="재단법인 충북과학기술혁신원 온디바이스 ai 기반 충북형 생활밀착 공공서비스 실증 마스터플랜 수립 용역 입찰 재공고">
+  <td class="col-idx">42</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">재단법인 충북과학기술혁신원</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735601&amp;bidPbancOrd=000" target="_blank" rel="noopener">온디바이스 AI 기반 충북형 생활밀착 공공서비스 실증 마스터플랜 수립 용역 입찰 재공고</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요 / 업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요 / 지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area">-</td>
+  <td class="col-budget">4,400만원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-unknown">미정</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="9999-99-99" data-budget="82000000" data-search="과학기술연합대학원대학교 2026년 ust 이러닝 콘텐츠 개발">
+  <td class="col-idx">43</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">과학기술연합대학원대학교</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01733845&amp;bidPbancOrd=000" target="_blank" rel="noopener">2026년 UST 이러닝 콘텐츠 개발</a><div class="row-reason">업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요 / 지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">콘텐츠 기획·개발·제작</span></td>
+  <td class="col-budget">8,200만원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-unknown">미정</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="9999-99-99" data-budget="198000000" data-search="재단법인 경상남도 관광재단 (긴급) (재공고)「k-거상」기획전시관 및 상설주제관 콘텐츠 개선·개발 용역 ">
+  <td class="col-idx">44</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">재단법인 경상남도 관광재단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01735803&amp;bidPbancOrd=000" target="_blank" rel="noopener">(긴급) (재공고)「K-거상」기획전시관 및 상설주제관 콘텐츠 개선·개발 용역 </a><div class="row-reason">업종제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요 / 지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">콘텐츠 기획·개발·제작</span></td>
+  <td class="col-budget">2억원</td>
+  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-09-17</td>
+  <td class="col-deadline"><span class="dday-badge dday-unknown">미정</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+      </tbody>
+    </table>
+    <div class="empty-state" id="emptyState" style="display:none;">조건에 맞는 공고가 없습니다.</div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var table = document.getElementById('dataTable');
+  var tbody = table.querySelector('tbody');
+  var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr.data-row'));
+  var state = { source: 'all', tier: 'all', query: '', sortKey: 'deadline', sortDir: 'asc' };
+
+  function cellText(row, key) {
+    var idx = { idx: 0, source: 1, org: 2, title: 3, area: 4, budget: 5, method: 6, codes: 7, posted: 8, deadline: 9, fit: 10 }[key];
+    return row.children[idx].textContent.trim();
+  }
+
+  function sortValue(row, key) {
+    if (key === 'deadline') return row.getAttribute('data-deadline');
+    if (key === 'budget') return parseInt(row.getAttribute('data-budget') || '0', 10);
+    if (key === 'idx') return parseInt(cellText(row, 'idx'), 10);
+    return cellText(row, key).toLowerCase();
+  }
+
+  function applyAll() {
+    var visible = 0;
+    rows.forEach(function(row) {
+      var matchesSource = state.source === 'all' || row.getAttribute('data-source') === state.source;
+      var matchesTier = state.tier === 'all' || row.getAttribute('data-tier') === state.tier;
+      var matchesQuery = !state.query || row.getAttribute('data-search').indexOf(state.query) !== -1;
+      var show = matchesSource && matchesTier && matchesQuery;
+      row.classList.toggle('is-hidden', !show);
+      if (show) visible++;
+    });
+    document.getElementById('resultCount').textContent = visible + ' / ' + rows.length + '건 표시';
+    document.getElementById('emptyState').style.display = visible === 0 ? 'block' : 'none';
+  }
+
+  function applySort() {
+    var dir = state.sortDir === 'asc' ? 1 : -1;
+    rows.sort(function(a, b) {
+      var va = sortValue(a, state.sortKey), vb = sortValue(b, state.sortKey);
+      if (va < vb) return -1 * dir;
+      if (va > vb) return 1 * dir;
+      return 0;
+    });
+    rows.forEach(function(row) { tbody.appendChild(row); });
+  }
+
+  table.querySelectorAll('thead th').forEach(function(th) {
+    th.addEventListener('click', function() {
+      var key = th.getAttribute('data-key');
+      if (state.sortKey === key) {
+        state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        state.sortKey = key;
+        state.sortDir = 'asc';
+      }
+      table.querySelectorAll('thead th').forEach(function(h) { h.classList.remove('sorted-asc', 'sorted-desc'); });
+      th.classList.add(state.sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc');
+      applySort();
+    });
+  });
+
+  document.querySelectorAll('[data-filter-group="source"] .filter-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('[data-filter-group="source"] .filter-btn').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      state.source = btn.getAttribute('data-source');
+      applyAll();
+    });
+  });
+
+  document.querySelectorAll('[data-filter-group="tier"] .filter-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('[data-filter-group="tier"] .filter-btn').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      state.tier = btn.getAttribute('data-tier');
+      applyAll();
+    });
+  });
+
+  document.getElementById('searchInput').addEventListener('input', function(e) {
+    state.query = e.target.value.trim().toLowerCase();
+    applyAll();
+  });
+
+  applySort();
+  applyAll();
+})();
+</script>
