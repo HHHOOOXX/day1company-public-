@@ -204,8 +204,12 @@ def run_daily_notification(
     # 2026-09-18 재설계: 메시지 한 번에 너무 많은 공고가 쏟아져서, 핵심(확인필요가 아닌) 공고만
     # 마감임박 상위 5건으로 추리고 나머지는 전부 대시보드로 넘긴다. ⚠️확인필요 등급은 이 5건 선정에서
     # 빠진다 — 애매한 건까지 채널에 바로 밀어붙이지 않기 위함(대시보드에서는 그대로 확인 가능).
+    # 2026-09-22 피드백: 단, 확실포함 건이 하나도 없는 날 메시지가 텅 비어 보이는 문제가 있어 —
+    # 그런 날에 한해서는 ⚠️확인필요 건이라도 카드에 보여준다(카드 자체에 "⚠️확인필요" 적합성 태그가
+    # 이미 붙어 있어 확실포함과 혼동되지 않는다).
     core_entries = [e for e in urgent_entries if e[2].get("_tier") != "review"]
     review_count = sum(1 for _, item in all_pairs if item.get("_tier") == "review")
+    digest_entries = core_entries or [e for e in urgent_entries if e[2].get("_tier") == "review"]
 
     summary_lines = [
         f"오늘 나라장터 입찰공고 {len(bid_pairs)}건",
@@ -224,8 +228,8 @@ def run_daily_notification(
 
     # text(폴백/콘솔 미리보기)
     message_parts = []
-    if core_entries:
-        message_parts.append(format_urgent_digest(core_entries, today=datetime.now().date(), top_n=5))
+    if digest_entries:
+        message_parts.append(format_urgent_digest(digest_entries, today=datetime.now().date(), top_n=5))
     message_parts.append(summary_text)
     if star_section:
         message_parts.append(star_section)
@@ -254,8 +258,8 @@ def run_daily_notification(
     blocks = [mrkdwn_section("<!channel>")]
     if warning_text:
         blocks.append(mrkdwn_section(warning_text))
-    if core_entries:
-        blocks.extend(format_urgent_blocks(core_entries, today=datetime.now().date(), top_n=5))
+    if digest_entries:
+        blocks.extend(format_urgent_blocks(digest_entries, today=datetime.now().date(), top_n=5))
     blocks.append(mrkdwn_section(summary_text))
     if star_section:
         blocks.append(mrkdwn_section(star_section))
