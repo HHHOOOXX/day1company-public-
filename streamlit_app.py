@@ -85,7 +85,11 @@ f1, f2, f3 = st.columns([1, 1, 2])
 with f1:
     sources = st.multiselect("구분", options=sorted(df["구분"].unique()), default=sorted(df["구분"].unique()))
 with f2:
-    fits = st.multiselect("적합성", options=sorted(df["적합성"].unique()), default=sorted(df["적합성"].unique()))
+    fit_options = sorted(df["적합성"].unique())
+    # ⚠️확인필요는 완전히 숨기지 않고 옵션으로는 남겨두되(백엔드가 이 등급을 제외하지 않고 태그만
+    # 달아 보내는 원칙과 동일), 대시보드를 처음 열었을 때는 기본으로 꺼서 확실한 건부터 보이게 한다.
+    fit_default = [f for f in fit_options if f != "⚠️ 확인필요"]
+    fits = st.multiselect("적합성", options=fit_options, default=fit_default)
 with f3:
     query = st.text_input("검색 (발주기관/용역명)", "")
 
