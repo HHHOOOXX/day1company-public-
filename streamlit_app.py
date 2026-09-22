@@ -36,6 +36,18 @@ def load_postings() -> pd.DataFrame:
         classification = row.get("classification") or {}
         d = deadline_date(row)
         star = classification.get("star")
+        tier = classification.get("tier")
+        # 2026-09-22 피드백: classification_json이 없는(2026-09-22 확신도 분류 기능 이전에 저장된)
+        # 구버전 행을 "✅확실포함"으로 잘못 기본 표시하던 버그를 고침 — tier가 아예 없는 것과
+        # 실제로 'include' 판정을 받은 것은 구분해야 한다.
+        if star:
+            fit = "⭐ 확실후보"
+        elif tier == "review":
+            fit = "⚠️ 확인필요"
+        elif tier == "include":
+            fit = "✅ 확실포함"
+        else:
+            fit = "❔ 분류정보없음(구버전)"
         records.append(
             {
                 "source": row["source"],
@@ -51,9 +63,7 @@ def load_postings() -> pd.DataFrame:
                 "마감라벨": _DEADLINE_LABELS.get(row["source"], "마감"),
                 "마감일": d.isoformat() if d else "",
                 "마감정렬": d or date.max,
-                "적합성": (
-                    "⭐ 확실후보" if star else ("⚠️ 확인필요" if classification.get("tier") == "review" else "✅ 확실포함")
-                ),
+                "적합성": fit,
                 "확실후보근거": f"{star['org']} / {star['project']}" if star else "",
                 "확인사유": " / ".join(classification.get("reasons") or []),
                 "발송여부": "발송됨" if row.get("notified") else "미발송",
@@ -73,7 +83,7 @@ if df.empty:
 
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("전체", len(df))
-col2.metric("✅ 확실포함 + ⭐확실후보", int((df["적합성"] != "⚠️ 확인필요").sum()))
+col2.metric("✅ 확실포함 + ⭐확실후보", int(df["적합성"].isin(["✅ 확실포함", "⭐ 확실후보"]).sum()))
 col3.metric("⚠️ 확인필요", int((df["적합성"] == "⚠️ 확인필요").sum()))
 today = datetime.now().date()
 urgent = df[(df["마감정렬"] != date.max) & (df["마감정렬"] >= today) & (df["마감정렬"] <= today.fromordinal(today.toordinal() + 7))]
