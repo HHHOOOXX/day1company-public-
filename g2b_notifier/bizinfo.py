@@ -18,6 +18,7 @@ import requests
 from .classify import _matches_any, attach_confidence, dedupe_latest, is_relevant_bid
 from .config import BIZINFO_API_URL, BIZINFO_SERVICE_KEY, NATIONWIDE_OVERRIDE_KEYWORDS, NON_METRO_REGION_ORGS
 from .doc_extract import extract_document_text
+from .doc_extract import requires_ineligible_certificate as _doc_requires_ineligible_certificate
 from .g2b import COLLECTION_WARNINGS, get_lookback_range, get_with_retry
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -158,17 +159,14 @@ def is_region_restricted_by_attachment(texts: list) -> bool:
 # 2026-09-18 피드백: "소상공인확인서"/"중소기업확인서"를 제출서류로 요구하는 지원사업은 대상이
 # 소상공인/특정 규모 이하 중소기업으로 한정된 사업이라 데이원컴퍼니가 참가할 수 없다.
 # 실제 사례로 검증: PBLN_000000000126566 — 제출서류에 "소상공인확인서" 명시(소상공인으로 명시된
-# 업체만 인정).
-_INELIGIBLE_CERTIFICATE_KEYWORDS = ["소상공인확인서", "중소기업확인서"]
-
-
+# 업체만 인정). 판정 로직 자체는 doc_extract.requires_ineligible_certificate 공용 함수로 옮겨서
+# 나라장터 사전규격/입찰공고 쪽(g2b.py)에서도 같이 쓴다(2026-09-22, R26BD00276775 사례로 확인).
 def requires_ineligible_certificate(texts: list) -> bool:
     """첨부 공고문에 우리가 발급받을 수 없는 확인서(소상공인확인서/중소기업확인서)가 제출서류로
     명시돼 있으면 배제 대상으로 판정한다."""
     for text in texts:
-        hits = [kw for kw in _INELIGIBLE_CERTIFICATE_KEYWORDS if kw in text]
-        if hits:
-            print(f"  [제외] 첨부파일 제출서류에 {hits} 요구 확인 -> 배제")
+        if _doc_requires_ineligible_certificate(text):
+            print("  [제외] 첨부파일 제출서류에 소상공인/중소기업 확인서 요구 확인 -> 배제")
             return True
     return False
 

@@ -123,6 +123,18 @@ def extract_document_text(raw: bytes, filename: str) -> str:
 _PAREN_CODE_RE = re.compile(r"\((\d{3,4})\)")
 _LABELED_CODE_RE = re.compile(r"업종코드\s*[:：]?\s*(\d{3,4})")
 
+# "소상공인확인서"/"중소기업확인서"뿐 아니라 "중·소기업·소상공인 확인서"처럼 가운뎃점/공백이 섞인
+# 변형도 있어(실사례: 사전규격 R26BD00276775 — 한동대학교 산학협력단 공고 과업지시서), 가운뎃점·공백을
+# 허용하는 정규식으로 잡는다. 소상공인/중소기업 확인서를 참가자격으로 요구하는 공고는 데이원컴퍼니가
+# 발급받을 수 없는 자격이라 참가 불가로 판정한다.
+_INELIGIBLE_CERTIFICATE_RE = re.compile(r"(?:소상공인|중소기업)[·ㆍ\s]*확인서")
+
+
+def requires_ineligible_certificate(text: str) -> bool:
+    """본문 텍스트에 우리가 발급받을 수 없는 확인서(소상공인확인서/중소기업확인서류)가
+    참가자격/제출서류로 명시돼 있으면 True."""
+    return bool(_INELIGIBLE_CERTIFICATE_RE.search(text or ""))
+
 
 def find_industry_codes(text: str, window: int = 400) -> set:
     """본문 텍스트에서 '업종코드' 문구 근처의 3~4자리 숫자를 후보 업종코드로 뽑는다.
