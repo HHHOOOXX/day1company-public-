@@ -237,27 +237,24 @@ def run_daily_notification(
         message_parts.append(dashboard_text)
     message = "\n\n".join(message_parts)
 
-    warning_text = ""
+    # 2026-09-22 피드백: API 호출 실패("일부 데이터 수집에 실패했습니다" 등) 관련 경고는 더 이상
+    # 슬랙으로 보내지 않는다 — 공고 건수만큼 개별 경고 줄이 쌓여 메시지가 읽기 힘들 정도로 길어지고,
+    # 대부분 일시적 API 지연/재시도 소진이라 팀 채널에서 조치할 수 있는 내용도 아니다. 콘솔 로그와
+    # 대시보드(docs/index.html)에는 그대로 남겨서 운영자가 필요할 때 확인할 수 있게 한다.
     if COLLECTION_WARNINGS:
         warning_lines = "\n".join(f"- {w}" for w in COLLECTION_WARNINGS)
-        warning_text = (
-            "*⚠️ 일부 데이터 수집에 실패했습니다 — 이 알림이 불완전할 수 있습니다.*\n"
-            f"{warning_lines}\n나라장터/기업마당에서 직접 한 번 더 확인해주세요."
-        )
-        message = warning_text + "\n\n" + message
+        print(f"[경고] 일부 데이터 수집 실패(슬랙에는 미포함):\n{warning_lines}")
 
-    if quiet_if_empty and not all_pairs and not star_postings and not COLLECTION_WARNINGS:
-        print("[백업 실행] 새로 보낼 공고도, 확실후보 리마인드도, 수집 경고도 없어서 조용히 종료합니다.")
+    if quiet_if_empty and not all_pairs and not star_postings:
+        print("[백업 실행] 새로 보낼 공고도, 확실후보 리마인드도 없어서 조용히 종료합니다.")
         conn.close()
         return
 
     message = "<!channel>\n" + message
 
-    # blocks(실제 Slack 레이아웃): 채널 멘션 → 경고(있으면) → 핵심 공고 TOP 5 카드 → 확실후보
-    # 리마인더 → 요약 카운트 → 대시보드 링크. 전체 리스트 나열은 더 이상 채널에 뿌리지 않는다.
+    # blocks(실제 Slack 레이아웃): 채널 멘션 → 핵심 공고 TOP 5 카드 → 확실후보 리마인더 →
+    # 요약 카운트 → 대시보드 링크. 전체 리스트 나열은 더 이상 채널에 뿌리지 않는다.
     blocks = [mrkdwn_section("<!channel>")]
-    if warning_text:
-        blocks.append(mrkdwn_section(warning_text))
     if digest_entries:
         blocks.extend(format_urgent_blocks(digest_entries, today=datetime.now().date(), top_n=5))
     blocks.append(mrkdwn_section(summary_text))
