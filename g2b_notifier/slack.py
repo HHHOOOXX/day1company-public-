@@ -169,15 +169,12 @@ def _urgency_emoji(delta) -> str:
 
 
 def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP") -> list:
-    """마감임박 TOP N을 Block Kit 카드(기관/구분/예산/계약방법/마감/적합성 필드)로 만든다.
+    """마감임박 TOP N을 Block Kit 카드로 만든다. 카드당 2줄(제목줄 + 기관·예산·마감 메타줄)로 압축한
+    한 줄형 레이아웃 — 카드당 4줄(제목+5필드+구분선)이던 이전 버전은 TOP5+TOP5만으로도 메시지가
+    너무 길어진다는 2026-09-23 피드백에 따라 축소했다. 계약방법 필드는 뺐다(대시보드에서 확인 가능).
     entries: [(source_tag, label, item), ...]. Block 개수가 한정적이어야 해서(Slack 메시지당 50개 제한)
     이 카드형 레이아웃은 TOP N에만 쓰고, 전체 리스트는 기존 압축 텍스트(chunk_mrkdwn_blocks)로 보낸다.
-    2026-09-18 가독성 개선: 마감 임박도를 신호등 이모지로, 수치성 정보(예산/계약방법/마감)는 코드
-    서식(`)으로 감싸서 한눈에 훑기 쉽게 만들었다.
-    title: 섹션 헤더 전체 텍스트(format_urgent_digest와 동일한 이유로 파라미터화).
-    2026-09-22 피드백: 판단 사유 인용문과 "적합성"(확실포함/확인필요 등 내부 용어) 필드를 카드에서
-    뺐다 — 팀원은 우리가 내부적으로 어떤 기준으로 걸렀는지 몰라도 되고, 그냥 깔끔하게 공고 정보만
-    보면 된다."""
+    title: 섹션 헤더 전체 텍스트(format_urgent_digest와 동일한 이유로 파라미터화)."""
     dated = [(deadline_date(item), tag, label, item) for tag, label, item in entries]
     dated = [d for d in dated if d[0] is not None and d[0] >= today]
     dated.sort(key=lambda d: d[0])
@@ -199,6 +196,7 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
     for idx, (_, tag, label, item) in enumerate(top, 1):
         item_title = item.get("bidNtceNm", "")
         url = item.get("bidNtceDtlUrl", "")
+        org = item.get("ntceInsttNm", "")
         source_emoji = _SOURCE_TAG_EMOJI.get(tag, "\U0001F4C4")
         rank_marker = rank_emoji[idx - 1] if idx <= 3 else f"`#{idx}`"
 
@@ -215,20 +213,15 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
             dday_text = f"`{date_str} (D-{delta})`"
         dday_text = f"{_urgency_emoji(delta)} {dday_text}"
 
+        budget_text = format_money(item.get("asignBdgtAmt", ""))
+        meta_line = f"\U0001F3E2 {org} · \U0001F4B0 {budget_text} · ⏰ {label} {dday_text}"
+
         blocks.append(
             {
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": title_line},
-                "fields": [
-                    {"type": "mrkdwn", "text": f"\U0001F3E2 *발주기관*\n{item.get('ntceInsttNm', '')}"},
-                    {"type": "mrkdwn", "text": f"{source_emoji} *구분*\n`{tag}`"},
-                    {"type": "mrkdwn", "text": f"\U0001F4B0 *예산*\n`{format_money(item.get('asignBdgtAmt', ''))}`"},
-                    {"type": "mrkdwn", "text": f"\U0001F4DD *계약방법*\n`{item.get('cntrctCnclsMthdNm') or '-'}`"},
-                    {"type": "mrkdwn", "text": f"⏰ *{label}*\n{dday_text}"},
-                ],
+                "text": {"type": "mrkdwn", "text": f"{title_line}\n{meta_line}"},
             }
         )
-        blocks.append({"type": "divider"})
 
     return blocks
 
