@@ -25,8 +25,8 @@ import os
 from . import db
 from .alio import fetch_alio_org_names, fetch_alio_preview
 from .bizinfo import fetch_bizinfo_preview, get_daily_relevant_bizinfo
-from .classify import tag_business_area
-from .config import BIZINFO_SERVICE_KEY, DASHBOARD_URL, REPO_ROOT, SERVICE_KEY, SLACK_MENTION
+from .classify import is_prior_proposal, tag_business_area
+from .config import BIZINFO_SERVICE_KEY, DASHBOARD_URL, REPO_ROOT, SERVICE_KEY, SLACK_MENTION, is_kr_holiday
 from .g2b import (
     COLLECTION_WARNINGS,
     analyze_classifications,
@@ -117,7 +117,16 @@ def run_daily_notification(
 
     quiet_if_empty=True면, 오늘자 발송이 db.daily_sends에 이미 기록돼 있을 때(=정시 실행이 이미 정상
     발송했을 때) 수집을 시작하기도 전에 조용히 종료한다. — 정시 실행이 지연/스킵될 경우를 대비한
-    "백업" 스케줄에서 쓴다."""
+    "백업" 스케줄에서 쓴다.
+
+    2026-09-23 피드백: 공휴일·연휴(설/추석 등)엔 API 호출/DB 기록도 없이 아예 조용히 종료한다 —
+    발주기관이 쉬는 날이라 신규 공고 자체가 없고, 있어도 팀원이 확인할 상황이 아니다."""
+    today_for_holiday = datetime.now().date()
+    is_holiday, holiday_name = is_kr_holiday(today_for_holiday)
+    if is_holiday:
+        print(f"[공휴일] 오늘({today_for_holiday.isoformat()})은 '{holiday_name}'이라 수집/발송 없이 종료합니다.")
+        return
+
     start_date, end_date = get_lookback_range()
     today_str = datetime.now().date().isoformat()
     conn = db.get_connection()
@@ -210,6 +219,20 @@ def run_daily_notification(
     core_entries = [e for e in urgent_entries if e[2].get("_tier") != "review"]
     review_entries = [e for e in urgent_entries if e[2].get("_tier") == "review"]
 
+    # 2026-09-23 피드백: 확실포함 공고가 하나도 없는 날엔 "확인해볼 만한 공고"를 5건 -> 10건으로
+    # 늘리고, 그중에서도 우리 공공사업그룹이 최근 제안서를 넣었던 기관(PROPOSAL_HISTORY, Google Drive
+    # "[제안 및 검토]" 폴더 기준)의 공고를 우선 채운다 — 이미 관계가 있는 기관의 후속사업일 가능성이
+    # 높아 다른 review 사유(발주기관 유형 애매함 등)보다 확인해볼 가치가 크다고 보기 때문.
+    # 업종제한/지역제한은 여기서 새로 확인할 필요가 없다 — get_daily_relevant_bids가 이미 공식 API로
+    # 걸러서(check_induty_eligibility/check_region_eligibility) 참가 불가로 확정된 건은 review_entries에
+    # 아예 들어오지 못한다(판정 보류 건만 사유와 함께 남아 있고, 이는 대시보드/카드에서 확인 가능).
+    review_top_n = 5
+    if not core_entries and review_entries:
+        review_top_n = 10
+        proposal_matches = [e for e in review_entries if is_prior_proposal(e[2])[0]]
+        other_review = [e for e in review_entries if not is_prior_proposal(e[2])[0]]
+        review_entries = (proposal_matches + other_review)[:review_top_n]
+
     # 2026-09-22 피드백: "⚠️확인필요 N건 포함" 같은 내부 등급 문구 없이, 그냥 오늘 몇 건씩 확인했는지만
     # 담백하게 알려준다.
     summary_lines = [
@@ -237,7 +260,7 @@ def run_daily_notification(
         message_parts.append(format_urgent_digest(core_entries, today=datetime.now().date(), top_n=5, title=core_title))
     if review_entries:
         message_parts.append(
-            format_urgent_digest(review_entries, today=datetime.now().date(), top_n=5, title=review_title)
+            format_urgent_digest(review_entries, today=datetime.now().date(), top_n=review_top_n, title=review_title)
         )
     message_parts.append(summary_text)
     if star_section:
@@ -268,7 +291,7 @@ def run_daily_notification(
         blocks.extend(format_urgent_blocks(core_entries, today=datetime.now().date(), top_n=5, title=core_title))
     if review_entries:
         blocks.extend(
-            format_urgent_blocks(review_entries, today=datetime.now().date(), top_n=5, title=review_title)
+            format_urgent_blocks(review_entries, today=datetime.now().date(), top_n=review_top_n, title=review_title)
         )
     blocks.append(mrkdwn_section(summary_text))
     if star_section:
