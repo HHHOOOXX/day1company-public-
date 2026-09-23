@@ -133,6 +133,17 @@ def mrkdwn_section(text: str) -> dict:
     return {"type": "section", "text": {"type": "mrkdwn", "text": text}}
 
 
+def context_section(text: str) -> dict:
+    """작은 회색 글씨(Block Kit context 블록)로 렌더링되는 텍스트.
+    2026-09-23 피드백: 카드와 같은 굵기/크기로 떠서 카드 내용과 섞여 보이던 요약 줄을,
+    카드와 시각적으로 구분되는 사이드노트 톤으로 빼기 위해 추가."""
+    return {"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}
+
+
+def divider() -> dict:
+    return {"type": "divider"}
+
+
 def chunk_mrkdwn_blocks(text: str, limit: int = 2900) -> list:
     """긴 mrkdwn 텍스트를 Slack section 블록의 글자수 제한(3000자) 아래로 줄바꿈 단위로 쪼갠다."""
     lines = text.split("\n")
@@ -150,9 +161,6 @@ def chunk_mrkdwn_blocks(text: str, limit: int = 2900) -> list:
     if buf:
         blocks.append(mrkdwn_section("\n".join(buf)))
     return blocks
-
-
-_SOURCE_TAG_EMOJI = {"입찰": "\U0001F4CB", "사전규격": "\U0001F4D0", "기업마당": "\U0001F3E2"}
 
 
 def _urgency_emoji(delta) -> str:
@@ -174,7 +182,10 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
     너무 길어진다는 2026-09-23 피드백에 따라 축소했다. 계약방법 필드는 뺐다(대시보드에서 확인 가능).
     entries: [(source_tag, label, item), ...]. Block 개수가 한정적이어야 해서(Slack 메시지당 50개 제한)
     이 카드형 레이아웃은 TOP N에만 쓰고, 전체 리스트는 기존 압축 텍스트(chunk_mrkdwn_blocks)로 보낸다.
-    title: 섹션 헤더 전체 텍스트(format_urgent_digest와 동일한 이유로 파라미터화)."""
+    title: 섹션 헤더 전체 텍스트(format_urgent_digest와 동일한 이유로 파라미터화).
+    2026-09-23 피드백: 카드마다 이모지가 너무 많아 눈이 피로하다 — 구분(📋/📐/🏢) 아이콘과 필드
+    라벨용 장식 아이콘(🏢/💰/⏰)을 다 빼고, 실제로 판단에 쓰는 신호인 순위 메달(TOP3)과 마감
+    긴급도 신호등만 남겼다. 소스 구분은 어차피 label(마감/의견/신청)로도 드러난다."""
     dated = [(deadline_date(item), tag, label, item) for tag, label, item in entries]
     dated = [d for d in dated if d[0] is not None and d[0] >= today]
     dated.sort(key=lambda d: d[0])
@@ -193,14 +204,13 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
 
     rank_emoji = ["\U0001F947", "\U0001F948", "\U0001F949"]  # 🥇🥈🥉 TOP3만 메달, 나머지는 번호
 
-    for idx, (_, tag, label, item) in enumerate(top, 1):
+    for idx, (_, _tag, label, item) in enumerate(top, 1):
         item_title = item.get("bidNtceNm", "")
         url = item.get("bidNtceDtlUrl", "")
         org = item.get("ntceInsttNm", "")
-        source_emoji = _SOURCE_TAG_EMOJI.get(tag, "\U0001F4C4")
         rank_marker = rank_emoji[idx - 1] if idx <= 3 else f"`#{idx}`"
 
-        title_line = f"{rank_marker} {source_emoji} *<{url}|{item_title}>*" if url else f"{rank_marker} {source_emoji} *{item_title}*"
+        title_line = f"{rank_marker} *<{url}|{item_title}>*" if url else f"{rank_marker} *{item_title}*"
 
         date_str, delta, passed = dday_parts(item, today)
         if delta is None:
@@ -214,7 +224,7 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
         dday_text = f"{_urgency_emoji(delta)} {dday_text}"
 
         budget_text = format_money(item.get("asignBdgtAmt", ""))
-        meta_line = f"\U0001F3E2 {org} · \U0001F4B0 {budget_text} · ⏰ {label} {dday_text}"
+        meta_line = f"{org} · {budget_text} · {label} {dday_text}"
 
         blocks.append(
             {

@@ -39,6 +39,8 @@ from .g2b import (
 )
 from .preview import write_and_open_preview
 from .slack import (
+    context_section,
+    divider,
     format_star_reminder,
     format_urgent_blocks,
     format_urgent_digest,
@@ -254,7 +256,8 @@ def run_daily_notification(
     core_title = "\U0001F4CB 오늘의 추천 공고"
     review_title = "\U0001F50D 이런 공고도 살펴보세요"
 
-    # text(폴백/콘솔 미리보기)
+    # text(폴백/콘솔 미리보기). 2026-09-23 피드백: 카드 다음에 바로 "확인했어요" 요약줄이 붙어
+    # 카드 내용과 뒤섞여 보였다 — blocks와 순서를 맞춰 요약은 맨 마지막으로 옮긴다.
     message_parts = []
     if core_entries:
         message_parts.append(format_urgent_digest(core_entries, today=datetime.now().date(), top_n=5, title=core_title))
@@ -262,11 +265,11 @@ def run_daily_notification(
         message_parts.append(
             format_urgent_digest(review_entries, today=datetime.now().date(), top_n=review_top_n, title=review_title)
         )
-    message_parts.append(summary_text)
     if star_section:
         message_parts.append(star_section)
     if dashboard_text:
         message_parts.append(dashboard_text)
+    message_parts.append(summary_text)
     message = "\n\n".join(message_parts)
 
     # 2026-09-22 피드백: API 호출 실패("일부 데이터 수집에 실패했습니다" 등) 관련 경고는 더 이상
@@ -285,19 +288,35 @@ def run_daily_notification(
     message = f"{SLACK_MENTION}\n" + message
 
     # blocks(실제 Slack 레이아웃): 멘션 → 오늘의 추천 공고 → 이런 공고도 살펴보세요 →
-    # 요약 카운트 → 예전 협업 기관 리마인더 → 대시보드 링크. 전체 리스트 나열은 더 이상 채널에 뿌리지 않는다.
+    # 예전 협업 기관 리마인더 → 대시보드 링크 → 요약 카운트. 전체 리스트 나열은 더 이상 채널에 뿌리지 않는다.
+    # 2026-09-23 피드백: 섹션들이 구분 없이 붙어 있어 카드가 서로 뒤섞여 보인다는 지적 — 섹션 사이에
+    # 구분선(divider)을 넣고, 카드와 같은 굵기로 떠 있던 요약줄은 작은 회색 글씨(context)로 바꿔 맨
+    # 아래로 뺐다(카드 내용과 헷갈리지 않게).
     blocks = [mrkdwn_section(SLACK_MENTION)]
+    has_section = False
     if core_entries:
         blocks.extend(format_urgent_blocks(core_entries, today=datetime.now().date(), top_n=5, title=core_title))
+        has_section = True
     if review_entries:
+        if has_section:
+            blocks.append(divider())
         blocks.extend(
             format_urgent_blocks(review_entries, today=datetime.now().date(), top_n=review_top_n, title=review_title)
         )
-    blocks.append(mrkdwn_section(summary_text))
+        has_section = True
     if star_section:
+        if has_section:
+            blocks.append(divider())
         blocks.append(mrkdwn_section(star_section))
+        has_section = True
     if dashboard_text:
+        if has_section:
+            blocks.append(divider())
         blocks.append(mrkdwn_section(dashboard_text))
+        has_section = True
+    if has_section:
+        blocks.append(divider())
+    blocks.append(context_section(summary_text))
 
     print("\n----- 발송할 메시지 미리보기 -----")
     print(message)
