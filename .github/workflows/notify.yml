@@ -33,6 +33,7 @@ jobs:
           G2B_SERVICE_KEY: ${{ secrets.G2B_SERVICE_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           BIZINFO_SERVICE_KEY: ${{ secrets.BIZINFO_SERVICE_KEY }}
+          ALIO_SERVICE_KEY: ${{ secrets.ALIO_SERVICE_KEY }}
           # 대시보드(AX사업기획실 공고목록) 호스팅 방식이 정해지면 그 URL을 시크릿으로 추가하면
           # 슬랙 메시지 마지막에 링크가 자동으로 붙는다. 비어있으면 링크 블록 자체가 생략된다.
           DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
