@@ -112,6 +112,9 @@ def _fetch_alio_orgs() -> set:
     return orgs
 
 
+COLLECTION_TIME_LIMIT_SECONDS = 240
+
+
 def run_daily_notification(
     categories=("용역",), include_pre_spec: bool = True, include_bizinfo: bool = True, quiet_if_empty: bool = False,
     dry_run: bool = False,
@@ -147,8 +150,11 @@ def run_daily_notification(
 
     # 나라장터/기업마당 API가 하루 종일 불안정한 날엔, 페이지별 재시도가 다 정상 동작해도
     # 수십 페이지를 순서대로 재시도하느라 실행 자체가 수십 분씩 걸릴 수 있다. 그러면 "정시 발송"이
-    # 의미가 없어지므로, 전체 수집 단계에 3분 상한을 두고 넘기면 남은 건 포기하고 지금까지 모은 것만 보낸다.
-    set_collection_deadline(180)
+    # 의미가 없어지므로, 전체 수집 단계에 상한을 두고 넘기면 남은 건 포기하고 지금까지 모은 것만 보낸다.
+    # 2026-09-29: 180초 -> 240초. 세 소스를 끝까지 검사한 CI 실측이 160초로 여유가 20초뿐이었다.
+    # 더 늘리면 안 된다 — 10:01 정시 실행이 10:07 백업(schedule, --quiet-if-empty) 전에 발송을 끝내야
+    # 백업이 has_sent_today로 조용히 종료한다(늦어지면 중복 발송).
+    set_collection_deadline(COLLECTION_TIME_LIMIT_SECONDS)
     collection_started = time.monotonic()
     all_pairs = []
     COLLECTION_WARNINGS.clear()
@@ -202,7 +208,7 @@ def run_daily_notification(
         all_pairs += bizinfo_pairs
         urgent_entries += [("기업마당", "신청", item) for _, item in bizinfo_pairs]
 
-    print(f"[수집 완료] 소요 {time.monotonic() - collection_started:.0f}초 (상한 180초)")
+    print(f"[수집 완료] 소요 {time.monotonic() - collection_started:.0f}초 (상한 {COLLECTION_TIME_LIMIT_SECONDS}초)")
 
     # 대시보드(AX사업기획실 공고목록)는 오늘자 전체 관심 공고(신규/기존 발송 여부 무관)를 담아서
     # 매 실행마다 최신 상태로 갱신한다. docs/index.html에 고정 경로로 써서, 호스팅(GitHub Pages 등)이
