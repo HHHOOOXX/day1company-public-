@@ -33,6 +33,9 @@ def _dday(item: dict, today: date):
 
     d = deadline_date(item)
     sort_key = d.isoformat()
+    if item.get("_deadline_basis"):
+        # 직찰 공고: 마감일 대신 개찰일시로 채운 값(g2b._fill_missing_bid_deadline)이라 구분해서 보여준다.
+        date_str = f"{date_str} {item['_deadline_basis']}"
     if passed:
         return f"{date_str} 마감", "dday-passed", sort_key
     if delta <= 3:

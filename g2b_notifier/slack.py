@@ -140,7 +140,7 @@ def format_urgent_digest(entries: list, today, top_n: int = 8, title: str = "\U0
         url = item.get("bidNtceDtlUrl", "")
         title_part = f"<{url}|{item_title}>" if url else item_title
         date_text = f"{d.month}/{d.day}" if d else "미정"
-        lines.append(f"{idx}. *[{org}]* {title_part} — {label} {date_text}  `{tag}`")
+        lines.append(f"{idx}. *[{org}]* {title_part} — {item.get('_deadline_basis') or label} {date_text}  `{tag}`")
 
     return "\n".join(lines)
 
@@ -237,7 +237,7 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
         dday_text = f"{_urgency_emoji(delta)} {dday_text}"
 
         budget_text = format_money(item.get("asignBdgtAmt", ""))
-        meta_line = f"{org} · {budget_text} · {label} {dday_text}"
+        meta_line = f"{org} · {budget_text} · {item.get('_deadline_basis') or label} {dday_text}"
 
         blocks.append(
             {

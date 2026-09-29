@@ -307,7 +307,22 @@ def fetch_bids_for_date_range(category: str = "용역", start_date=None, end_dat
     items = _fetch_paginated(operation, begin_str, end_str, page_size, max_pages)
     for item in items:
         _normalize_bid_org(item)
+        _fill_missing_bid_deadline(item)
     return items
+
+
+def _fill_missing_bid_deadline(item: dict) -> None:
+    """직찰(서면/방문 제출) 공고는 전자입찰 마감일(bidClseDt)이 비어 온다 — 개찰일시(opengDt)만 있다.
+    (2026-09-29 실사례: 마감일이 빈 입찰 9건이 전부 bidMethdNm='직찰'. 가천대 AI부트캠프 등이
+    마감일 없는 건으로 취급돼 슬랙 카드에서 빠졌고, 마감 7일 게이트도 판단 근거 없이 통과했다.)
+    실제 서류 제출 마감은 개찰 전이므로 개찰일시를 근사 마감일로 채우고, 표시할 때 '개찰'로 구분할 수
+    있게 _deadline_basis를 남긴다."""
+    if (item.get("bidClseDt") or "").strip():
+        return
+    openg = (item.get("opengDt") or "").strip()
+    if openg:
+        item["bidClseDt"] = openg
+        item["_deadline_basis"] = "개찰"
 
 
 def _normalize_bid_org(item: dict) -> None:
