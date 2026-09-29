@@ -1,11 +1,13 @@
 """CLI 진입점.
 
 서브커맨드:
-  notify [카테고리1,카테고리2,...] [--quiet-if-empty]
+  notify [카테고리1,카테고리2,...] [--quiet-if-empty] [--dry-run]
                                        - 실제 Slack 발송 (+ SQLite에 upsert, 중복 발송 방지)
                                          --quiet-if-empty: 오늘 이미 정상 발송된 기록이 있으면 즉시 종료.
                                          그렇지 않을 때도 새 공고/확실후보 리마인드/수집경고가 다 없으면 생략
                                          (정시 실행이 지연될 때를 대비한 백업 스케줄용)
+                                         --dry-run: 수집/필터링/메시지 구성까지만 하고 Slack 발송과
+                                         발송 기록(notified/daily_sends)은 남기지 않는다(CI 동작 확인용)
   daily [카테고리1,카테고리2,...]    - 발송 전 미리보기 (DB에 손대지 않음, 콘솔 텍스트)
   preview [카테고리1,카테고리2,...]  - 발송 전 미리보기 (DB에 손대지 않음, Slack UI처럼 생긴 로컬 HTML로 브라우저에 열림)
   classify [카테고리] [일수]          - 업종분류/키워드 교차 집계
@@ -17,6 +19,7 @@
 
 import json
 import sys
+import time
 import traceback
 from datetime import datetime
 
@@ -110,7 +113,8 @@ def _fetch_alio_orgs() -> set:
 
 
 def run_daily_notification(
-    categories=("용역",), include_pre_spec: bool = True, include_bizinfo: bool = True, quiet_if_empty: bool = False
+    categories=("용역",), include_pre_spec: bool = True, include_bizinfo: bool = True, quiet_if_empty: bool = False,
+    dry_run: bool = False,
 ):
     """기준 기간(월요일은 직전 금요일 하루, 그 외엔 어제 하루) 관심 공고 + 사전규격(용역) + 기업마당
     지원사업을 수집해 Slack으로 발송한다.
@@ -145,6 +149,7 @@ def run_daily_notification(
     # 수십 페이지를 순서대로 재시도하느라 실행 자체가 수십 분씩 걸릴 수 있다. 그러면 "정시 발송"이
     # 의미가 없어지므로, 전체 수집 단계에 3분 상한을 두고 넘기면 남은 건 포기하고 지금까지 모은 것만 보낸다.
     set_collection_deadline(180)
+    collection_started = time.monotonic()
     all_pairs = []
     COLLECTION_WARNINGS.clear()
 
@@ -196,6 +201,8 @@ def run_daily_notification(
         bizinfo_pairs = _filter_unnotified(conn, "bizinfo", bizinfo_items, today_str)
         all_pairs += bizinfo_pairs
         urgent_entries += [("기업마당", "신청", item) for _, item in bizinfo_pairs]
+
+    print(f"[수집 완료] 소요 {time.monotonic() - collection_started:.0f}초 (상한 180초)")
 
     # 대시보드(AX사업기획실 공고목록)는 오늘자 전체 관심 공고(신규/기존 발송 여부 무관)를 담아서
     # 매 실행마다 최신 상태로 갱신한다. docs/index.html에 고정 경로로 써서, 호스팅(GitHub Pages 등)이
@@ -321,6 +328,11 @@ def run_daily_notification(
     print("\n----- 발송할 메시지 미리보기 -----")
     print(message)
 
+    if dry_run:
+        print("[dry-run] Slack 발송과 발송 기록(notified/daily_sends)을 생략합니다.")
+        conn.close()
+        return
+
     sent = send_to_slack(message, blocks=blocks)
     if sent:
         db.mark_notified(conn, [pid for pid, _ in all_pairs])
@@ -353,10 +365,11 @@ def main():
         _require_g2b_key()
         args = sys.argv[2:]
         quiet_if_empty = "--quiet-if-empty" in args
+        dry_run = "--dry-run" in args
         positional = [a for a in args if not a.startswith("--")]
         categories = positional[0].split(",") if positional else ["용역"]
         try:
-            run_daily_notification(categories=categories, quiet_if_empty=quiet_if_empty)
+            run_daily_notification(categories=categories, quiet_if_empty=quiet_if_empty, dry_run=dry_run)
         except Exception as exc:
             # 소스별 try/except로도 못 막는, 완전히 예상 못한 버그용 마지막 안전망.
             # 팀 채널에는 정리된 공고문만 보여야 하므로 슬랙으로는 알리지 않는다 —

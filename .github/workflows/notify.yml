@@ -10,7 +10,12 @@ on:
     # 월요일 실행분은 스크립트 로직상 직전 금요일 하루치만 확인함(주말엔 공고가 올라오지 않으므로 토/일 조회 불필요)
     # 참고: 정각(:00)은 전세계적으로 스케줄이 몰려 GitHub Actions가 지연시키는 경우가 있어 :07로 분산
     - cron: "7 1 * * 1-5"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Slack 발송·DB 커밋 없이 수집/필터링만 실행(동작 확인용)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write  # data/notifier.db 변경사항을 워크플로우가 직접 커밋하기 위해 필요
@@ -30,6 +35,7 @@ jobs:
 
       - name: Run daily notification
         env:
+          PYTHONUNBUFFERED: "1"  # 로그 타임스탬프가 실제 진행 시각을 반영하도록(버퍼링 시 전부 끝난 시각으로 찍힘)
           G2B_SERVICE_KEY: ${{ secrets.G2B_SERVICE_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           BIZINFO_SERVICE_KEY: ${{ secrets.BIZINFO_SERVICE_KEY }}
@@ -37,12 +43,13 @@ jobs:
           # 대시보드(AX사업기획실 공고목록) 호스팅 방식이 정해지면 그 URL을 시크릿으로 추가하면
           # 슬랙 메시지 마지막에 링크가 자동으로 붙는다. 비어있으면 링크 블록 자체가 생략된다.
           DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
-          # ALIO_SERVICE_KEY는 실제 호출 방식을 아직 못 찾아 보류 중 (g2b_notifier/alio.py 참고)
         # 외부 크론이 부르는 workflow_dispatch는 항상 전체 메시지를 보낸다(진짜 정시 발송).
         # 내부 schedule은 백업이라, 외부 크론이 이미 정상적으로 보냈으면(오늘자 공고가 전부
         # notified 처리돼 있으면) --quiet-if-empty 덕분에 조용히 넘어가고, 안 됐을 때만 대신 보낸다.
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python test_g2b_api.py notify 용역 --dry-run
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
             python test_g2b_api.py notify 용역 --quiet-if-empty
           else
             python test_g2b_api.py notify 용역
@@ -52,6 +59,7 @@ jobs:
       # 다음 실행에서도 이어서 쓰고, 대시보드도 매일 최신 상태로 유지한다.
       # GitHub Actions엔 영구 서버가 없어서, 파일 자체를 git으로 버전관리하는 방식으로 상태를 유지한다.
       - name: Commit updated notifier DB and dashboard
+        if: ${{ !inputs.dry_run }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
