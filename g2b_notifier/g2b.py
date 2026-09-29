@@ -3,6 +3,7 @@
 import re
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from urllib.parse import unquote
 
@@ -60,6 +61,20 @@ def set_collection_deadline(seconds: float):
 
 def _deadline_exceeded() -> bool:
     return COLLECTION_DEADLINE is not None and time.monotonic() > COLLECTION_DEADLINE
+
+
+def _time_left() -> float:
+    if COLLECTION_DEADLINE is None:
+        return float("inf")
+    return COLLECTION_DEADLINE - time.monotonic()
+
+
+# 2026-09-29: 입찰공고 첨부파일 검사(공고당 최대 10개 다운로드+파싱)가 전체 수집 시간 상한(180초)을
+# 혼자 다 써버려, 뒤에 오는 업종/지역 API 조회와 사전규격/기업마당 수집까지 통째로 건너뛴 날이 있었다
+# (36건 전부 '조회 실패' review로 발송, 사전규격/기업마당 0건). 첨부 검사는 이만큼 시간을 남겨두고
+# 멈추고, 여러 공고를 동시에 받아 속도를 올린다(로컬 측정: 순차 48초 / 공고 42건).
+ATTACHMENT_SCAN_RESERVE_SECONDS = 60
+ATTACHMENT_SCAN_WORKERS = 4
 
 
 def get_with_retry(url: str, params: dict, max_retries: int = 4, label: str = ""):
@@ -724,7 +739,9 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
 
     attach_confidence(relevant, alio_orgs)
 
-    eligible = []
+    # 1차: 업종제한/지역제한 공식 API 조회(공고당 2회, 빠름)를 전부 먼저 끝낸다 — 예전처럼 공고마다
+    # 첨부파일 검사까지 한 번에 하면, 첨부 검사에 시간을 다 쓴 뒤 남은 공고는 이 조회조차 못 한다.
+    api_passed = []
     for item in relevant:
         ind_ok, ind_certain, matched_codes = check_induty_eligibility(item)
         if not ind_ok:
@@ -732,13 +749,29 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
         rgn_ok, rgn_certain = check_region_eligibility(item)
         if not rgn_ok:
             continue
-        # 2026-09-22 추가: 업종제한/지역제한 API 통과 후에도 첨부 공고문에만 소상공인/중소기업
-        # 확인서 요구나 실제 행사운영 등 EXCLUDE_KEYWORDS 도메인 내용이 적혀있는 경우가 있어
-        # (bidNtceNm만으로는 알 수 없는 사례들 — resolve_prespec_attachments 주석 참고), 전체 수집
-        # 시간 상한에 걸리지 않은 한 마지막으로 확인한다.
+        api_passed.append((item, ind_certain, rgn_certain, matched_codes))
+
+    # 2차: 2026-09-22 추가 — 업종제한/지역제한 API 통과 후에도 첨부 공고문에만 소상공인/중소기업
+    # 확인서 요구나 실제 행사운영 등 EXCLUDE_KEYWORDS 도메인 내용이 적혀있는 경우가 있어
+    # (bidNtceNm만으로는 알 수 없는 사례들 — resolve_prespec_attachments 주석 참고), 시간이 남는 한
+    # 병렬로 확인한다. 시간이 모자라 못 본 건은 None.
+    def _scan(item):
+        if _time_left() < ATTACHMENT_SCAN_RESERVE_SECONDS:
+            return None
+        return check_bid_attachment_issues(item)
+
+    with ThreadPoolExecutor(max_workers=ATTACHMENT_SCAN_WORKERS) as pool:
+        scans = list(pool.map(_scan, [entry[0] for entry in api_passed]))
+    unscanned = sum(1 for scan in scans if scan is None)
+    if unscanned:
+        print(f"  [경고] 수집 시간 부족으로 첨부 공고문 미확인 {unscanned}건 -> 확인필요로 발송")
+        COLLECTION_WARNINGS.append(f"입찰공고 첨부파일: 시간 부족으로 {unscanned}건 미확인")
+
+    eligible = []
+    for (item, ind_certain, rgn_certain, matched_codes), scan in zip(api_passed, scans):
         doc_matched_codes = set()
-        if not _deadline_exceeded():
-            restricted, exclude_hits, doc_matched_codes = check_bid_attachment_issues(item)
+        if scan is not None:
+            restricted, exclude_hits, doc_matched_codes = scan
             if restricted:
                 print(f"  [제외] {item.get('bidNtceNo', '')} 소상공인/중소기업 확인서 요구 확인 -> 배제")
                 continue
@@ -757,6 +790,9 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
         if not rgn_certain:
             item["_tier"] = "review"
             item["_reasons"].append("지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요")
+        if scan is None:
+            item["_tier"] = "review"
+            item["_reasons"].append("시간 부족으로 첨부 공고문 미확인 — 중소기업확인서 요구·제외 대상 사업인지 직접 확인 필요")
         eligible.append(item)
 
     review_count = sum(1 for item in eligible if item.get("_tier") == "review")
