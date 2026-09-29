@@ -1,6 +1,7 @@
 """나라장터(조달청) 입찰공고정보서비스 + 사전규격정보서비스 연동."""
 
 import re
+import threading
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -53,6 +54,29 @@ COLLECTION_WARNINGS = []
 # 이 상한을 넘기면 남은 페이지/소스는 그 자리에서 포기하고 지금까지 모은 것만으로 발송한다.
 COLLECTION_DEADLINE = None
 
+# 2026-09-29: GitHub Actions 러너(미국 리전)에서 나라장터 API를 부를 때마다 새로 TLS 연결을 맺느라
+# 공고당 업종/지역 조회가 로컬(0.2초)보다 몇 배 느렸다(63건 조회에 102초). 연결을 재사용하도록
+# 모듈 공용 Session을 쓴다. 병렬 조회(스레드) 수보다 커넥션 풀을 넉넉히 잡는다.
+HTTP = requests.Session()
+HTTP.mount("https://", requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=16))
+
+# data.go.kr는 키당 초당 요청 수를 제한한다 — 8개 동시 요청 시 대부분 HTTP 429
+# "LIMITED_NUMBER_OF_SERVICE_REQUESTS_PER_SECOND_EXCEEDS_ERROR"가 돌아왔다(2026-09-29 실측, 4개 동시는 정상).
+# 병렬 조회 스레드들이 공유하는 간격 제한으로 초당 API_MAX_REQUESTS_PER_SECOND회를 넘지 않게 한다.
+API_MAX_REQUESTS_PER_SECOND = 5
+_throttle_lock = threading.Lock()
+_next_request_at = 0.0
+
+
+def _throttle():
+    global _next_request_at
+    with _throttle_lock:
+        now = time.monotonic()
+        wait = _next_request_at - now
+        _next_request_at = max(now, _next_request_at) + 1 / API_MAX_REQUESTS_PER_SECOND
+    if wait > 0:
+        time.sleep(wait)
+
 
 def set_collection_deadline(seconds: float):
     global COLLECTION_DEADLINE
@@ -75,6 +99,8 @@ def _time_left() -> float:
 # 멈추고, 여러 공고를 동시에 받아 속도를 올린다(로컬 측정: 순차 48초 / 공고 42건).
 ATTACHMENT_SCAN_RESERVE_SECONDS = 60
 ATTACHMENT_SCAN_WORKERS = 4
+# 업종/지역 공식 API 조회(공고당 2회). 실제 속도는 _throttle의 초당 요청 제한이 정한다.
+ELIGIBILITY_CHECK_WORKERS = 4
 
 
 def get_with_retry(url: str, params: dict, max_retries: int = 4, label: str = ""):
@@ -88,7 +114,8 @@ def get_with_retry(url: str, params: dict, max_retries: int = 4, label: str = ""
             COLLECTION_WARNINGS.append(f"{label}: 시간 상한 초과로 재시도 중단")
             return None
         try:
-            return requests.get(url, params=params, timeout=15)
+            _throttle()
+            return HTTP.get(url, params=params, timeout=15)
         except requests.exceptions.RequestException as exc:
             print(f"[재시도] 연결 실패: {exc} (시도 {attempt}/{max_retries})")
             if attempt == max_retries:
@@ -386,7 +413,7 @@ def _content_disposition_filename(url: str) -> str:
     """첨부파일 다운로드 URL에 요청을 보내 실제 파일명을 얻는다(stream=True로 헤더만 읽고 바로 닫아서
     본문 다운로드는 하지 않음). 사전규격 API 응답엔 파일명 필드가 아예 없어서 이 방법밖에 없다."""
     try:
-        resp = requests.get(url, timeout=10, stream=True, headers={"User-Agent": "Mozilla/5.0"})
+        resp = HTTP.get(url, timeout=10, stream=True, headers={"User-Agent": "Mozilla/5.0"})
         content_disposition = resp.headers.get("Content-Disposition", "")
         resp.close()
     except requests.exceptions.RequestException:
@@ -401,7 +428,7 @@ def _content_disposition_filename(url: str) -> str:
 def _fetch_attachment(url: str):
     """첨부파일을 통째로 내려받아 (파일명, 원문 바이트)를 반환한다. 실패 시 ("", b"")."""
     try:
-        resp = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        resp = HTTP.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
     except requests.exceptions.RequestException:
         return "", b""
     match = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)", resp.headers.get("Content-Disposition", ""))
@@ -741,15 +768,17 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
 
     # 1차: 업종제한/지역제한 공식 API 조회(공고당 2회, 빠름)를 전부 먼저 끝낸다 — 예전처럼 공고마다
     # 첨부파일 검사까지 한 번에 하면, 첨부 검사에 시간을 다 쓴 뒤 남은 공고는 이 조회조차 못 한다.
-    api_passed = []
-    for item in relevant:
+    def _check_eligibility(item):
         ind_ok, ind_certain, matched_codes = check_induty_eligibility(item)
         if not ind_ok:
-            continue
+            return None
         rgn_ok, rgn_certain = check_region_eligibility(item)
         if not rgn_ok:
-            continue
-        api_passed.append((item, ind_certain, rgn_certain, matched_codes))
+            return None
+        return item, ind_certain, rgn_certain, matched_codes
+
+    with ThreadPoolExecutor(max_workers=ELIGIBILITY_CHECK_WORKERS) as pool:
+        api_passed = [entry for entry in pool.map(_check_eligibility, relevant) if entry is not None]
 
     # 2차: 2026-09-22 추가 — 업종제한/지역제한 API 통과 후에도 첨부 공고문에만 소상공인/중소기업
     # 확인서 요구나 실제 행사운영 등 EXCLUDE_KEYWORDS 도메인 내용이 적혀있는 경우가 있어
@@ -847,10 +876,21 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
 
     attach_confidence(relevant, alio_orgs)
 
-    final = []
-    for item in relevant:
-        spec_urls = item.pop("_spec_doc_urls", [])
+    # 2026-09-29: 첨부파일 다운로드/파싱을 순차로 하면 CI에서 31건에 48초가 걸려 뒤에 오는 기업마당
+    # 수집이 시간 상한에 걸렸다 — 입찰공고 첨부 검사와 같은 방식으로 병렬로 미리 받아둔다.
+    spec_urls_list = [item.pop("_spec_doc_urls", []) for item in relevant]
+
+    def _resolve(spec_urls):
         if _deadline_exceeded():
+            return None
+        return resolve_prespec_attachments(spec_urls)
+
+    with ThreadPoolExecutor(max_workers=ATTACHMENT_SCAN_WORKERS) as pool:
+        resolved_list = list(pool.map(_resolve, spec_urls_list))
+
+    final = []
+    for item, spec_urls, resolved in zip(relevant, spec_urls_list, resolved_list):
+        if resolved is None:
             # 전체 수집 시간 상한에 걸리면 남은 건은 첨부파일 본문 다운로드/탐색 없이
             # 기존 동작(첫 번째 첨부파일, 업종코드 미확인, 확인서 요구 미확인)으로 대체하고 넘어간다
             # — 정시 발송이 우선이다.
@@ -858,7 +898,7 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
             item["_industry_codes"] = set()
             final.append(item)
             continue
-        best_url, matched_codes, restricted, exclude_hits = resolve_prespec_attachments(spec_urls)
+        best_url, matched_codes, restricted, exclude_hits = resolved
         if restricted:
             # 2026-09-22 피드백: 과업지시서/제안요청서에 "중·소기업·소상공인 확인서" 등 우리가
             # 발급받을 수 없는 확인서를 참가자격으로 요구하면, 키워드/업종코드가 아무리 잘 맞아도
