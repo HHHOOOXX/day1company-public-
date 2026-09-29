@@ -103,20 +103,35 @@ def format_star_reminder(star_postings: list, today) -> str:
     return "\n".join(lines)
 
 
+def _pick_top(entries: list, today, top_n: int) -> list:
+    """카드/요약 섹션에 올릴 상위 top_n건을 [(deadline, tag, label, item), ...]로 고른다.
+    마감이 지난 건만 빼고, 마감일이 있는 건을 급한 순으로 앞에, 마감일이 비어 있거나 파싱 안 되는
+    건은 입력 순서 그대로 뒤에 붙인다.
+    2026-09-29: 예전엔 마감일 없는 건을 통째로 버렸는데, 호출부(cli.py)가 이미 10건으로 잘라 넘긴
+    뒤라 카드가 10건 -> 7건으로 줄고, 제안 이력 기관이라 1순위로 뽑힌 가천대 공고까지 사라졌다.
+    협상계약 등은 bidClseDt가 비어 오는 경우가 있어 마감일 유무로 관심도를 판단할 수 없다."""
+    dated, undated = [], []
+    for tag, label, item in entries:
+        d = deadline_date(item)
+        if d is None:
+            undated.append((None, tag, label, item))
+        elif d >= today:
+            dated.append((d, tag, label, item))
+    dated.sort(key=lambda x: x[0])
+    return (dated + undated)[:top_n]
+
+
 def format_urgent_digest(entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP") -> str:
     """세 소스를 합쳐 마감이 가장 급한 순으로 top_n개만 뽑은 요약 섹션.
     entries: [(source_tag, label, item), ...] — 소스마다 마감 필드 라벨(마감/의견마감/신청)이 다르므로 같이 받는다.
     title: 섹션 헤더 전체 텍스트 — 확실포함용/확인필요 참고용 섹션이 같은 카드 포맷을 재사용하되
     성격이 다르다는 걸 구분하기 위해 호출부에서 지정한다(2026-09-22, 내부 용어 없이 사람이 바로
     이해할 수 있는 문구로— "확인필요" 같은 태그는 더 이상 노출하지 않는다)."""
-    dated = [(deadline_date(item), tag, label, item) for tag, label, item in entries]
-    dated = [d for d in dated if d[0] is not None and d[0] >= today]
-    dated.sort(key=lambda d: d[0])
-    top = dated[:top_n]
+    top = _pick_top(entries, today, top_n)
 
     header = f"*{title} ({len(top)}건)*"
     if not top:
-        return f"{header}\n마감일이 확인되는 공고가 없어 생략합니다."
+        return f"{header}\n마감 전인 공고가 없어 생략합니다."
 
     lines = [header, ""]
     for idx, (d, tag, label, item) in enumerate(top, 1):
@@ -124,7 +139,8 @@ def format_urgent_digest(entries: list, today, top_n: int = 8, title: str = "\U0
         item_title = item.get("bidNtceNm", "")
         url = item.get("bidNtceDtlUrl", "")
         title_part = f"<{url}|{item_title}>" if url else item_title
-        lines.append(f"{idx}. *[{org}]* {title_part} — {label} {d.month}/{d.day}  `{tag}`")
+        date_text = f"{d.month}/{d.day}" if d else "미정"
+        lines.append(f"{idx}. *[{org}]* {title_part} — {label} {date_text}  `{tag}`")
 
     return "\n".join(lines)
 
@@ -186,10 +202,7 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
     2026-09-23 피드백: 카드마다 이모지가 너무 많아 눈이 피로하다 — 구분(📋/📐/🏢) 아이콘과 필드
     라벨용 장식 아이콘(🏢/💰/⏰)을 다 빼고, 실제로 판단에 쓰는 신호인 순위 메달(TOP3)과 마감
     긴급도 신호등만 남겼다. 소스 구분은 어차피 label(마감/의견/신청)로도 드러난다."""
-    dated = [(deadline_date(item), tag, label, item) for tag, label, item in entries]
-    dated = [d for d in dated if d[0] is not None and d[0] >= today]
-    dated.sort(key=lambda d: d[0])
-    top = dated[:top_n]
+    top = _pick_top(entries, today, top_n)
 
     blocks = [
         {
@@ -199,7 +212,7 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
     ]
 
     if not top:
-        blocks.append(mrkdwn_section("마감일이 확인되는 공고가 없어 생략합니다."))
+        blocks.append(mrkdwn_section("마감 전인 공고가 없어 생략합니다."))
         return blocks
 
     rank_emoji = ["\U0001F947", "\U0001F948", "\U0001F949"]  # 🥇🥈🥉 TOP3만 메달, 나머지는 번호
