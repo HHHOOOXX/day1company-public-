@@ -115,15 +115,25 @@ def is_relevant_bid(item: dict, alio_orgs: set = None) -> bool:
     return _keyword_confidence(title) != "none" and _org_confidence(org, alio_orgs) != "none"
 
 
+# 2026-10-01: Google Drive "[제안 및 검토]" 폴더와 짝지어진 공고의 발주기관(proposals.py가 DB에 기록).
+# 실행 시작 때 cli가 set_learned_proposal_orgs()로 채운다 — config.PROPOSAL_HISTORY(수기 목록)에 더해진다.
+_LEARNED_PROPOSAL_ORGS = []
+
+
+def set_learned_proposal_orgs(orgs) -> None:
+    global _LEARNED_PROPOSAL_ORGS
+    _LEARNED_PROPOSAL_ORGS = [{"date": "", "org": o, "project": "Drive 제안 검토 폴더"} for o in orgs if o]
+
+
 def is_prior_proposal(item: dict):
-    """발주기관명이 우리가 과거 제안서를 제출했던 이력(PROPOSAL_HISTORY)의 기관명과 겹치는지
-    확인한다. WIN_HISTORY(is_confident_win, 실제 수주 확정)와 달리 결과가 아직 안 나온 단계라
-    ⭐확실후보로 강제 include하지 않고 is_relevant_bid의 통과 조건 완화 + review 사유 표시에만 쓴다.
+    """발주기관명이 우리가 과거 제안서를 제출했던 이력(PROPOSAL_HISTORY + Drive 제안 검토 폴더에서 자동으로
+    모은 기관)의 기관명과 겹치는지 확인한다. WIN_HISTORY(is_confident_win, 실제 수주 확정)와 달리 결과가 아직
+    안 나온 단계라 ⭐확실후보로 강제 include하지 않고 is_relevant_bid의 통과 조건 완화 + review 사유 표시에만 쓴다.
     양방향 부분일치는 is_confident_win과 동일한 이유(발주기관명에 소속이 덧붙는 경우가 많음)."""
     org = (item.get("ntceInsttNm", "") or "").upper()
     if not org:
         return False, None
-    for entry in PROPOSAL_HISTORY:
+    for entry in PROPOSAL_HISTORY + _LEARNED_PROPOSAL_ORGS:
         ref_org = entry["org"].upper()
         if ref_org in org or org in ref_org:
             return True, entry

@@ -43,9 +43,30 @@ _NON_HANGUL_ALPHA_RE = re.compile(r"[^A-Za-z가-힣]")
 _BRACKET_RE = re.compile(r"\[[^\]]*\]|\([^)]*\)")
 
 
-def _bigrams(title: str) -> frozenset:
+def bigrams(title: str) -> frozenset:
+    """제목을 두 글자씩 자른 조각 집합. 숫자·기호·괄호 머리말은 뺀다."""
     s = _NON_HANGUL_ALPHA_RE.sub("", _BRACKET_RE.sub("", title or "")).upper()
     return frozenset(s[i:i + 2] for i in range(len(s) - 1))
+
+
+class TitleSimilarity:
+    """글자 2-gram에 IDF 가중치를 준 가중 Jaccard 유사도(0~1). "모집"·"사업"·"용역"처럼 거의 모든 공고에
+    나오는 글자쌍은 가중치가 낮아져서, 주제가 실제로 겹치는 제목끼리 점수가 높게 나온다.
+    corpus: IDF를 계산할 2-gram 집합들(비교 대상 전체)."""
+
+    def __init__(self, corpus):
+        corpus = list(corpus)
+        df = Counter(g for grams in corpus for g in grams)
+        n = max(1, len(corpus))
+        self._idf = {g: math.log(n / c) for g, c in df.items()}
+        self._default_idf = math.log(n)
+
+    def _weight(self, grams) -> float:
+        return sum(self._idf.get(g, self._default_idf) for g in grams)
+
+    def score(self, a: frozenset, b: frozenset) -> float:
+        union = self._weight(a | b)
+        return self._weight(a & b) / union if union else 0.0
 
 
 def _exclude_hits(title: str) -> list:
@@ -53,48 +74,35 @@ def _exclude_hits(title: str) -> list:
 
 
 class ExampleIndex:
-    """과거 처리 사례 검색용 인덱스. 글자 2-gram에 IDF 가중치를 준 가중 Jaccard로 비교한다 — "모집"·"사업"·
-    "용역"처럼 거의 모든 공고에 나오는 글자쌍은 가중치가 낮아져서, 주제가 실제로 겹치는 사례가 위로 온다.
-    하루 후보가 몇 건뿐이라 전수 비교(수천 건 x 수 건)로 충분하다."""
+    """과거 처리 사례 검색용 인덱스(유사도는 TitleSimilarity). 하루 후보가 몇 건뿐이라 전수 비교(수천 건 x
+    수 건)로 충분하다."""
 
     def __init__(self, postings: list, raw_titles: list):
         """postings: db.get_postings_for_rag(), raw_titles: db.get_raw_titles()."""
         passed, passed_grams = [], set()
         for source, title, org, tier, _reasons, _notified in postings:
-            grams = _bigrams(title)
+            grams = bigrams(title)
             passed_grams.add(grams)
             passed.append((grams, f"[{_SOURCE_LABEL.get(source, source)}] {title} ({org}) — 관심 공고로 통과"))
         # 제외 사례 중 '제외 키워드에 걸려서' 빠진 것만 쓴다. 그 외(교육 키워드 없음, 업종제한 등)는 제목만으로
         # 실제 이유를 알 수 없어서, 비슷하다는 이유로 기관 공고를 낮추는 근거로 쓰기엔 약하다.
         rejected = []
         for _norm, title, source in raw_titles:
-            grams = _bigrams(title)
+            grams = bigrams(title)
             hits = _exclude_hits(title)
             if grams in passed_grams or not hits:
                 continue
             rejected.append((grams, f"[{_SOURCE_LABEL.get(source, source)}] {title} — 제외 키워드 {hits}로 제외"))
         self.passed, self.rejected = passed, rejected
-
-        df = Counter(g for grams, _ in passed + rejected for g in grams)
-        n = max(1, len(passed) + len(rejected))
-        self._idf = {g: math.log(n / c) for g, c in df.items()}
-        self._default_idf = math.log(n)
-
-    def _weight(self, grams) -> float:
-        return sum(self._idf.get(g, self._default_idf) for g in grams)
+        self._sim = TitleSimilarity(g for g, _ in passed + rejected)
 
     def _top(self, pool, grams, k):
-        scored = []
-        for g, text in pool:
-            union = self._weight(grams | g)
-            if union:
-                scored.append((self._weight(grams & g) / union, text))
-        scored.sort(reverse=True)
+        scored = sorted(((self._sim.score(grams, g), text) for g, text in pool), reverse=True)
         return scored[:k]
 
     def retrieve(self, title: str, k: int = TOP_K_EXAMPLES):
         """([(유사도, 통과 사례 설명), ...], [(유사도, 제외 사례 설명), ...]) — 유사도 내림차순."""
-        grams = _bigrams(title)
+        grams = bigrams(title)
         return self._top(self.passed, grams, k), self._top(self.rejected, grams, k)
 
 

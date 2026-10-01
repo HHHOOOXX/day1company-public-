@@ -33,6 +33,9 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           BIZINFO_SERVICE_KEY: ${{ secrets.BIZINFO_SERVICE_KEY }}
           ALIO_SERVICE_KEY: ${{ secrets.ALIO_SERVICE_KEY }}
+          # Drive "[제안 및 검토]" 폴더 → 제안 이력 자동 기록(g2b_notifier/proposals.py). 서비스 계정 키 JSON 전체.
+          # 없으면 그 단계만 건너뛴다.
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
         run: python test_g2b_api.py notify 용역 --quiet-if-empty
 

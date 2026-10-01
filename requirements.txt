@@ -2,3 +2,5 @@ requests
 python-dotenv
 olefile
 pypdf
+# Drive "[제안 및 검토]" 폴더 읽기(g2b_notifier/proposals.py) — 서비스 계정 인증용
+google-auth

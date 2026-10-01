@@ -15,6 +15,8 @@
   bizinfo-discover                    - 기업마당 원본 필드 탐색 (BIZINFO_SERVICE_KEY 필요)
   alio-discover                       - ALIO 공공기관 정보 원본 필드 탐색 (ALIO_SERVICE_KEY 필요)
   agency-discover                     - 기관 홈페이지 게시판(NIPA/NIA/중진공 등) 목록 파싱 결과 확인
+  proposals                           - 제안 검토 이력(Drive [제안 및 검토] 폴더 ↔ 공고 연결) 현황
+  proposals-sync                      - Drive 폴더를 지금 읽어 제안 이력만 갱신 (GOOGLE_SERVICE_ACCOUNT_JSON 필요)
   (인자 없음 / 카테고리만)             - 최근 입찰공고 미리보기
 """
 
@@ -27,10 +29,11 @@ from datetime import datetime
 import os
 
 from . import db
+from .proposals import print_report as print_proposal_report, sync_proposals
 from .agencies import AGENCY_UNSUPPORTED, fetch_all_agency_rows, get_daily_relevant_agency_notices, normalize_title
 from .alio import fetch_alio_org_names, fetch_alio_preview
 from .bizinfo import fetch_bizinfo_preview, get_daily_relevant_bizinfo
-from .classify import is_prior_proposal, tag_business_area
+from .classify import is_prior_proposal, set_learned_proposal_orgs, tag_business_area
 from .config import BIZINFO_SERVICE_KEY, DASHBOARD_URL, REPO_ROOT, SERVICE_KEY, SLACK_MENTION, is_kr_holiday
 from .g2b import (
     COLLECTION_WARNINGS,
@@ -165,6 +168,8 @@ def run_daily_notification(
     start_date, end_date = get_lookback_range()
     today_str = datetime.now().date().isoformat()
     conn = db.get_connection()
+    # 2026-10-01: Drive 제안 검토 폴더와 짝지어진 공고의 발주기관을 '과거 제안 기관' 판정에 더한다(proposals.py).
+    set_learned_proposal_orgs(db.get_proposal_orgs(conn))
 
     if quiet_if_empty and db.has_sent_today(conn, today_str):
         # 오늘자 발송이 이미 성공적으로 끝난 뒤 지연 실행된 백업 워크플로우다. 이 실행이 API 일시
@@ -242,6 +247,10 @@ def run_daily_notification(
         agency_pairs = _filter_unnotified(conn, "agency", agency_items, today_str)
         all_pairs += agency_pairs
         urgent_entries += [("기관공고", "마감", item) for _, item in agency_pairs]
+
+    # 2026-10-01: Drive "[제안 및 검토]" 폴더를 읽어 제안 이력을 갱신한다. 오늘 수집한 원본 공고명(raw_titles)까지
+    # 저장된 뒤에 돌려야 "필터가 놓친 공고"를 잡을 수 있어서 수집이 다 끝난 이 자리에서 한다.
+    sync_proposals(conn, COLLECTION_WARNINGS)
 
     print(f"[수집 완료] 소요 {time.monotonic() - collection_started:.0f}초 (상한 {COLLECTION_TIME_LIMIT_SECONDS}초)")
 
@@ -454,6 +463,14 @@ def main():
             return
         print("\n===== ALIO 원본 응답 (전체 필드 확인용) =====")
         print(json.dumps(data, ensure_ascii=False, indent=2)[:4000])
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] in ("proposals", "proposals-sync"):
+        report_conn = db.get_connection()
+        if sys.argv[1] == "proposals-sync":
+            sync_proposals(report_conn, [])
+        print_proposal_report(report_conn)
+        report_conn.close()
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "agency-discover":

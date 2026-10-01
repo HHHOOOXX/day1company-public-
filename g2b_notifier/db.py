@@ -7,7 +7,9 @@ GitHub Actions엔 영구 서버가 없으므로, DB 파일(data/notifier.db) 자
 
 import json
 import os
+import re
 import sqlite3
+from datetime import datetime
 
 from .config import REPO_ROOT
 
@@ -57,6 +59,27 @@ CREATE TABLE IF NOT EXISTS raw_titles (
     title TEXT NOT NULL,
     source TEXT NOT NULL,
     last_seen_date TEXT NOT NULL
+);
+
+-- 2026-10-01: 제안 검토 이력(proposals.py). Google Drive "[제안 및 검토]" 폴더 하나 = 한 행. 팀이 폴더를 만들면
+-- 매일 실행 때 자동으로 읽어 DB 공고와 짝짓는다(match_status 값의 뜻은 proposals.py 참고).
+CREATE TABLE IF NOT EXISTS proposals (
+    folder_id TEXT PRIMARY KEY,
+    folder_name TEXT NOT NULL,
+    label TEXT,
+    folder_month TEXT,
+    outcome TEXT,
+    created TEXT,
+    owner TEXT,
+    match_status TEXT NOT NULL,
+    posting_id TEXT,
+    posting_source TEXT,
+    posting_title TEXT,
+    posting_org TEXT,
+    notified INTEGER NOT NULL DEFAULT 0,
+    score REAL,
+    evidence TEXT,
+    updated_date TEXT NOT NULL
 );
 """
 
@@ -221,6 +244,86 @@ def get_postings_for_rag(conn: sqlite3.Connection) -> list:
             cls = {}
         out.append((source, title, org or "", cls.get("tier", "include"), cls.get("reasons") or [], bool(notified)))
     return out
+
+
+def get_postings_for_matching(conn: sqlite3.Connection) -> list:
+    """제안 이력 짝짓기용 공고 목록 [(id, source, title, org, 게시일, notified)]. 기관 게시판 공고도 포함한다.
+    게시일 필드 형식이 소스마다 달라 날짜로 못 읽으면 처음 수집한 날로 대신한다."""
+    rows = conn.execute(
+        "SELECT id, source, title, org, posted_at, first_seen_date, notified FROM postings"
+    ).fetchall()
+    out = []
+    for pid, source, title, org, posted_at, first_seen, notified in rows:
+        posted = (posted_at or "")[:10]
+        if not re.match(r"\d{4}-\d{2}-\d{2}$", posted):
+            posted = first_seen
+        out.append((pid, source, title, org or "", posted, notified))
+    return out
+
+
+def get_raw_titles_dated(conn: sqlite3.Connection) -> list:
+    """[(정규화 제목, 원래 제목, 출처, 마지막으로 본 날)]"""
+    return conn.execute("SELECT norm_title, title, source, last_seen_date FROM raw_titles").fetchall()
+
+
+def get_db_start_date(conn: sqlite3.Connection):
+    """DB에 공고가 쌓이기 시작한 날(date). 비어 있으면 None."""
+    row = conn.execute("SELECT MIN(first_seen_date) FROM postings").fetchone()
+    try:
+        return datetime.strptime(row[0], "%Y-%m-%d").date() if row and row[0] else None
+    except ValueError:
+        return None
+
+
+def get_settled_proposal_ids(conn: sqlite3.Connection) -> set:
+    """확정된 제안 폴더 — 다시 계산하지 않는다. matched/missed는 짝이 확정됐고, before_db는 DB 수집 시작 전에
+    만든 폴더라 앞으로도 짝지을 공고가 생기지 않는다."""
+    rows = conn.execute(
+        "SELECT folder_id FROM proposals WHERE match_status IN ('matched', 'missed', 'before_db')"
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def upsert_proposals(conn: sqlite3.Connection, records: list, today_str: str) -> None:
+    conn.executemany(
+        """
+        INSERT INTO proposals (folder_id, folder_name, label, folder_month, outcome, created, owner, match_status,
+                               posting_id, posting_source, posting_title, posting_org, notified, score, evidence,
+                               updated_date)
+        VALUES (:folder_id, :folder_name, :label, :folder_month, :outcome, :created, :owner, :match_status,
+                :posting_id, :posting_source, :posting_title, :posting_org, :notified, :score, :evidence, :today)
+        ON CONFLICT(folder_id) DO UPDATE SET
+            folder_name = excluded.folder_name, label = excluded.label, outcome = excluded.outcome,
+            match_status = excluded.match_status, posting_id = excluded.posting_id,
+            posting_source = excluded.posting_source, posting_title = excluded.posting_title,
+            posting_org = excluded.posting_org, notified = excluded.notified, score = excluded.score,
+            evidence = excluded.evidence, updated_date = excluded.updated_date
+        """,
+        [{**r, "notified": int(r["notified"]), "today": today_str} for r in records],
+    )
+    conn.commit()
+
+
+def count_proposals_by_status(conn: sqlite3.Connection) -> dict:
+    return dict(conn.execute("SELECT match_status, COUNT(*) FROM proposals GROUP BY match_status").fetchall())
+
+
+def get_proposals(conn: sqlite3.Connection) -> list:
+    conn_rows = conn.execute(
+        "SELECT folder_name, created, outcome, match_status, posting_title, posting_org, posting_source, notified, "
+        "score, evidence FROM proposals ORDER BY created DESC"
+    ).fetchall()
+    keys = ["folder_name", "created", "outcome", "match_status", "posting_title", "posting_org", "posting_source",
+            "notified", "score", "evidence"]
+    return [dict(zip(keys, r)) for r in conn_rows]
+
+
+def get_proposal_orgs(conn: sqlite3.Connection) -> list:
+    """제안 검토 폴더와 확실히 짝지어진 공고의 발주기관 — classify의 '과거 제안 기관' 판정에 더한다."""
+    rows = conn.execute(
+        "SELECT DISTINCT posting_org FROM proposals WHERE match_status IN ('matched', 'missed') AND posting_org != ''"
+    ).fetchall()
+    return [r[0] for r in rows]
 
 
 def upsert_institutions(conn: sqlite3.Connection, institutions: list) -> None:
