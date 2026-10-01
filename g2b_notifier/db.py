@@ -46,7 +46,21 @@ CREATE TABLE IF NOT EXISTS daily_sends (
     date TEXT PRIMARY KEY,
     sent_at TEXT NOT NULL
 );
+
+-- 2026-10-01: 나라장터 입찰공고/사전규격 + 기업마당 원본 공고명(관심 공고 필터로 걸러진 것 포함).
+-- 두 군데에 쓴다: (1) 기관 홈페이지 게시판에 며칠 늦게 다시 올라온 같은 공고를 중복으로 뺀다(실사례: IITP
+-- "[자체조달 사전규격공개] 양자클러스터..."는 나라장터 등록 며칠 뒤 9/27에 IITP 게시판에 올라옴).
+-- (2) 기관 게시판 2차 검토(rag_screen.py)의 과거 제외 사례 — postings엔 관심 공고만 저장돼서, 나라장터 필터에서 제외된
+-- 공고 제목은 여기에만 남는다. RAW_TITLE_RETENTION_DAYS 지나면 지운다.
+CREATE TABLE IF NOT EXISTS raw_titles (
+    norm_title TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    source TEXT NOT NULL,
+    last_seen_date TEXT NOT NULL
+);
 """
+
+RAW_TITLE_RETENTION_DAYS = 60
 
 
 def get_connection() -> sqlite3.Connection:
@@ -164,6 +178,49 @@ def get_historical_bid_titles(conn: sqlite3.Connection) -> list:
     사전규격 필터링용 '학습된 키워드'를 만드는 재료 — classify.build_learned_keywords 참고."""
     rows = conn.execute("SELECT title, org FROM postings WHERE source = 'g2b_bid'").fetchall()
     return [(row[0], row[1]) for row in rows]
+
+
+def get_known_titles(conn: sqlite3.Connection) -> list:
+    """기관 게시판(source='agency')이 아닌 다른 소스로 이미 저장된 공고 제목 전체.
+    기관 사이트에 다시 올라온 같은 공고를 중복으로 걸러내는 데 쓴다(agencies.normalize_title로 비교)."""
+    rows = conn.execute("SELECT title FROM postings WHERE source != 'agency'").fetchall()
+    return [row[0] for row in rows]
+
+
+def save_raw_titles(conn: sqlite3.Connection, titles_by_norm: dict, today_str: str) -> None:
+    """오늘 받은 원본 공고명을 저장하고, 보관기간이 지난 것은 지운다.
+    titles_by_norm: {정규화 제목: (원래 제목, 출처)}."""
+    conn.executemany(
+        "INSERT INTO raw_titles (norm_title, title, source, last_seen_date) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(norm_title) DO UPDATE SET last_seen_date = excluded.last_seen_date",
+        [(norm, title, source, today_str) for norm, (title, source) in titles_by_norm.items() if norm],
+    )
+    conn.execute(
+        "DELETE FROM raw_titles WHERE last_seen_date < date(?, ?)",
+        (today_str, f"-{RAW_TITLE_RETENTION_DAYS} days"),
+    )
+    conn.commit()
+
+
+def get_raw_titles(conn: sqlite3.Connection) -> list:
+    """[(정규화 제목, 원래 제목, 출처), ...]"""
+    return conn.execute("SELECT norm_title, title, source FROM raw_titles").fetchall()
+
+
+def get_postings_for_rag(conn: sqlite3.Connection) -> list:
+    """기관 게시판 2차 검토(rag_screen.py)의 과거 통과 사례용: 지금까지 관심 공고로 판정돼 저장된 공고(기관 게시판 제외) 전체.
+    [(source, title, org, tier, reasons(list), notified(bool)), ...]"""
+    rows = conn.execute(
+        "SELECT source, title, org, classification_json, notified FROM postings WHERE source != 'agency'"
+    ).fetchall()
+    out = []
+    for source, title, org, cls_json, notified in rows:
+        try:
+            cls = json.loads(cls_json or "{}")
+        except ValueError:
+            cls = {}
+        out.append((source, title, org or "", cls.get("tier", "include"), cls.get("reasons") or [], bool(notified)))
+    return out
 
 
 def upsert_institutions(conn: sqlite3.Connection, institutions: list) -> None:

@@ -18,6 +18,7 @@ _SOURCE_META = {
     "bid": {"label": "입찰공고", "cls": "src-bid", "date_label": "마감"},
     "pre_spec": {"label": "사전규격", "cls": "src-prespec", "date_label": "의견마감"},
     "bizinfo": {"label": "기업마당", "cls": "src-bizinfo", "date_label": "신청마감"},
+    "agency": {"label": "기관공고", "cls": "src-agency", "date_label": "마감"},
 }
 
 
@@ -120,6 +121,7 @@ _PAGE_TEMPLATE = """<!doctype html>
     --src-bid-bg: #E8EEFD; --src-bid-text: #2A4FB0;
     --src-prespec-bg: #F2E9FC; --src-prespec-text: #6B3FA0;
     --src-bizinfo-bg: #E4F6EC; --src-bizinfo-text: #1E7B45;
+    --src-agency-bg: #FDF0E4; --src-agency-text: #A0521C;
     --dday-urgent: #D8352B; --dday-soon: #C97A0A; --dday-normal: #5B5F68; --dday-passed: #ABB0B8;
   }}
   * {{ box-sizing: border-box; }}
@@ -190,6 +192,7 @@ _PAGE_TEMPLATE = """<!doctype html>
   .src-bid {{ background: var(--src-bid-bg); color: var(--src-bid-text); }}
   .src-prespec {{ background: var(--src-prespec-bg); color: var(--src-prespec-text); }}
   .src-bizinfo {{ background: var(--src-bizinfo-bg); color: var(--src-bizinfo-text); }}
+  .src-agency {{ background: var(--src-agency-bg); color: var(--src-agency-text); }}
   .area-chip {{ display: inline-block; background: #F0F1F4; color: #4A4E57; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 7px; margin: 1px 3px 1px 0; white-space: nowrap; }}
   .induty-chip {{ display: inline-block; background: #EAF1FF; color: #2A4FB0; font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 7px; margin-left: 5px; cursor: help; }}
   .fit-chip {{ font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 8px; white-space: nowrap; display: inline-block; }}
@@ -245,6 +248,7 @@ _PAGE_TEMPLATE = """<!doctype html>
       <button class="filter-btn" data-source="bid">입찰공고</button>
       <button class="filter-btn" data-source="pre_spec">사전규격</button>
       <button class="filter-btn" data-source="bizinfo">기업마당</button>
+      <button class="filter-btn" data-source="agency">기관공고</button>
     </div>
     <div class="filter-group" data-filter-group="tier">
       <button class="filter-btn active" data-tier="all">전체</button>
@@ -371,7 +375,7 @@ _PAGE_TEMPLATE = """<!doctype html>
 """
 
 
-def build_preview_html(bid_items, pre_spec_items, bizinfo_items, start_date, end_date, warnings=None) -> str:
+def build_preview_html(bid_items, pre_spec_items, bizinfo_items, start_date, end_date, warnings=None, agency_items=()) -> str:
     period_label = start_date.isoformat() if start_date == end_date else f"{start_date.isoformat()}~{end_date.isoformat()}"
     today = date.today()
 
@@ -379,6 +383,7 @@ def build_preview_html(bid_items, pre_spec_items, bizinfo_items, start_date, end
         [("bid", item) for item in bid_items]
         + [("pre_spec", item) for item in pre_spec_items]
         + [("bizinfo", item) for item in bizinfo_items]
+        + [("agency", item) for item in agency_items]
     )
     # 마감 임박(오늘 기준) 순으로 기본 정렬해서 보여준다.
     all_entries.sort(key=lambda pair: deadline_date(pair[1]) or date.max)
@@ -421,9 +426,14 @@ def build_preview_html(bid_items, pre_spec_items, bizinfo_items, start_date, end
     )
 
 
-def write_and_open_preview(bid_items, pre_spec_items, bizinfo_items, start_date, end_date, warnings=None, path=None, auto_open=True) -> str:
+def write_and_open_preview(
+    bid_items, pre_spec_items, bizinfo_items, start_date, end_date, warnings=None, path=None, auto_open=True,
+    agency_items=(),
+) -> str:
     path = path or PREVIEW_PATH
-    html_content = build_preview_html(bid_items, pre_spec_items, bizinfo_items, start_date, end_date, warnings)
+    html_content = build_preview_html(
+        bid_items, pre_spec_items, bizinfo_items, start_date, end_date, warnings, agency_items=agency_items
+    )
     with open(path, "w", encoding="utf-8") as f:
         f.write(html_content)
     print(f"[미리보기] {path} 생성 완료")

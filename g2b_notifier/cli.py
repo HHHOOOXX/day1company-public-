@@ -14,6 +14,7 @@
   prespec [일수]                      - 사전규격(용역) 원본 필드 탐색
   bizinfo-discover                    - 기업마당 원본 필드 탐색 (BIZINFO_SERVICE_KEY 필요)
   alio-discover                       - ALIO 공공기관 정보 원본 필드 탐색 (ALIO_SERVICE_KEY 필요)
+  agency-discover                     - 기관 홈페이지 게시판(NIPA/NIA/중진공 등) 목록 파싱 결과 확인
   (인자 없음 / 카테고리만)             - 최근 입찰공고 미리보기
 """
 
@@ -26,12 +27,14 @@ from datetime import datetime
 import os
 
 from . import db
+from .agencies import AGENCY_UNSUPPORTED, fetch_all_agency_rows, get_daily_relevant_agency_notices, normalize_title
 from .alio import fetch_alio_org_names, fetch_alio_preview
 from .bizinfo import fetch_bizinfo_preview, get_daily_relevant_bizinfo
 from .classify import is_prior_proposal, tag_business_area
 from .config import BIZINFO_SERVICE_KEY, DASHBOARD_URL, REPO_ROOT, SERVICE_KEY, SLACK_MENTION, is_kr_holiday
 from .g2b import (
     COLLECTION_WARNINGS,
+    RAW_SOURCE_TITLES,
     analyze_classifications,
     fetch_pre_spec_preview,
     fetch_recent_bids,
@@ -115,9 +118,32 @@ def _fetch_alio_orgs() -> set:
 COLLECTION_TIME_LIMIT_SECONDS = 240
 
 
+def _collect_agency_notices(conn, start_date, end_date, alio_orgs, other_items) -> list:
+    """기관 홈페이지 게시판 공고 수집(나라장터·기업마당에 없는 공고만, 본문·과거사례 2차 검토 포함). 실패해도 빈 목록으로
+    계속 진행한다(다른 소스 발송을 막지 않음)."""
+    try:
+        # 오늘 받은 나라장터·사전규격·기업마당 원본 공고명(필터로 걸러진 것 포함)을 쌓아둔다. 기관 게시판이
+        # 며칠 늦게 올리는 같은 공고를 빼는 데(최근 60일치 비교)와 2차 검토의 과거 사례(RAG)로 쓴다.
+        db.save_raw_titles(
+            conn,
+            {normalize_title(t): (t, source) for t, source in RAW_SOURCE_TITLES.items() if t},
+            datetime.now().date().isoformat(),
+        )
+        known_titles = db.get_known_titles(conn) + [item.get("bidNtceNm", "") for item in other_items]
+        return get_daily_relevant_agency_notices(
+            start_date=start_date, end_date=end_date, alio_orgs=alio_orgs, known_titles=known_titles,
+            rag_postings=db.get_postings_for_rag(conn), rag_raw_titles=db.get_raw_titles(conn),
+        )
+    except Exception as exc:
+        print(f"[에러] 기관 게시판 수집 중 예외 발생: {exc!r}")
+        traceback.print_exc()
+        COLLECTION_WARNINGS.append(f"기관 게시판: 예외 발생 ({exc.__class__.__name__})")
+        return []
+
+
 def run_daily_notification(
     categories=("용역",), include_pre_spec: bool = True, include_bizinfo: bool = True, quiet_if_empty: bool = False,
-    dry_run: bool = False,
+    dry_run: bool = False, include_agency: bool = True,
 ):
     """기준 기간(월요일은 직전 금요일 하루, 그 외엔 어제 하루) 관심 공고 + 사전규격(용역) + 기업마당
     지원사업을 수집해 Slack으로 발송한다.
@@ -176,6 +202,7 @@ def run_daily_notification(
     urgent_entries = [("입찰", "마감", item) for _, item in bid_pairs]
     pre_specs = []
     bizinfo_items = []
+    agency_items = []
 
     if include_pre_spec:
         try:
@@ -208,6 +235,14 @@ def run_daily_notification(
         all_pairs += bizinfo_pairs
         urgent_entries += [("기업마당", "신청", item) for _, item in bizinfo_pairs]
 
+    # 2026-10-01: NIPA/NIA/IITP/과학창의재단/소진공/중진공/서울신보/창업진흥원 게시판(agencies.py). 나라장터
+    # 대행 공고나 이미 다른 소스로 본 공고는 agencies 쪽에서 빼므로, 위 소스들을 다 모은 뒤에 돌린다.
+    if include_agency:
+        agency_items = _collect_agency_notices(conn, start_date, end_date, alio_orgs, bids + pre_specs + bizinfo_items)
+        agency_pairs = _filter_unnotified(conn, "agency", agency_items, today_str)
+        all_pairs += agency_pairs
+        urgent_entries += [("기관공고", "마감", item) for _, item in agency_pairs]
+
     print(f"[수집 완료] 소요 {time.monotonic() - collection_started:.0f}초 (상한 {COLLECTION_TIME_LIMIT_SECONDS}초)")
 
     # 대시보드(AX사업기획실 공고목록)는 오늘자 전체 관심 공고(신규/기존 발송 여부 무관)를 담아서
@@ -217,7 +252,7 @@ def run_daily_notification(
     os.makedirs(os.path.dirname(dashboard_path), exist_ok=True)
     write_and_open_preview(
         bids, pre_specs, bizinfo_items, start_date, end_date,
-        warnings=list(COLLECTION_WARNINGS), path=dashboard_path, auto_open=False,
+        warnings=list(COLLECTION_WARNINGS), path=dashboard_path, auto_open=False, agency_items=agency_items,
     )
 
     # 이미 발송됐지만 마감이 안 지난 확실후보(⭐)는 마감일까지 매일 다시 안내한다 — 오늘 새로
@@ -257,6 +292,8 @@ def run_daily_notification(
         summary_lines.append(f"사전규격 {len(pre_spec_pairs)}건")
     if include_bizinfo and BIZINFO_SERVICE_KEY:
         summary_lines.append(f"기업마당 {len(bizinfo_pairs)}건")
+    if include_agency:
+        summary_lines.append(f"기관 홈페이지 {len(agency_pairs)}건")
     summary_text = " / ".join(summary_lines) + " 확인했어요"
 
     dashboard_text = ""
@@ -419,6 +456,15 @@ def main():
         print(json.dumps(data, ensure_ascii=False, indent=2)[:4000])
         return
 
+    if len(sys.argv) > 1 and sys.argv[1] == "agency-discover":
+        for name, rows in fetch_all_agency_rows().items():
+            print(f"\n===== {name}: {len(rows)}건 =====")
+            for row in rows:
+                print(f"  {row['bidNtceDt'][:10]} | 마감 {row['bidClseDt'] or '-':10} | {row['bidNtceNm'][:60]}")
+                print(f"    {row['bidNtceDtlUrl']}")
+        print("\n[미지원] " + " / ".join(f"{k}: {v}" for k, v in AGENCY_UNSUPPORTED.items()))
+        return
+
     if len(sys.argv) > 1 and sys.argv[1] == "preview":
         _require_g2b_key()
         categories = sys.argv[2].split(",") if len(sys.argv) > 2 else ["용역"]
@@ -444,9 +490,15 @@ def main():
             if BIZINFO_SERVICE_KEY
             else []
         )
+        preview_conn = db.get_connection()
+        agency_items = _collect_agency_notices(
+            preview_conn, start_date, end_date, alio_orgs, bid_items + pre_spec_items + bizinfo_items
+        )
+        preview_conn.close()
 
         write_and_open_preview(
-            bid_items, pre_spec_items, bizinfo_items, start_date, end_date, warnings=list(COLLECTION_WARNINGS)
+            bid_items, pre_spec_items, bizinfo_items, start_date, end_date, warnings=list(COLLECTION_WARNINGS),
+            agency_items=agency_items,
         )
         return
 
@@ -470,6 +522,12 @@ def main():
             print("\n\n===== 기업마당 =====")
             bizinfo_items = get_daily_relevant_bizinfo(alio_orgs=alio_orgs)
             print_daily_digest(bizinfo_items)
+
+        print("\n\n===== 기관 홈페이지 게시판 =====")
+        daily_conn = db.get_connection()
+        start_date, end_date = get_lookback_range()
+        print_daily_digest(_collect_agency_notices(daily_conn, start_date, end_date, alio_orgs, items + pre_spec_items))
+        daily_conn.close()
         return
 
     _require_g2b_key()

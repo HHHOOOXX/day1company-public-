@@ -54,6 +54,14 @@ COLLECTION_WARNINGS = []
 # 이 상한을 넘기면 남은 페이지/소스는 그 자리에서 포기하고 지금까지 모은 것만으로 발송한다.
 COLLECTION_DEADLINE = None
 
+# 2026-10-01: 이번 실행에서 나라장터 입찰공고/사전규격 + 기업마당 API로 받은 원본 공고명 전체(관심 공고
+# 필터로 걸러진 것 포함) -> 출처("g2b_bid"/"g2b_prespec"/"bizinfo"). 두 군데에 쓴다:
+#   1) 기관 홈페이지 게시판(agencies.py)에 다시 게시된 같은 공고를 중복으로 뺀다 — 필터 통과분만 비교하면,
+#      나라장터 쪽에서 업종제한 등으로 이미 걸러낸 공고가 기관 사이트 경로로 되살아난다
+#      (실사례: NIA "지방세 AI 상담 서비스 개인정보 영향평가" R26BK01725670).
+#   2) db.raw_titles에 쌓여 기관 게시판 2차 검토(rag_screen.py)의 과거 제외 사례로 쓰인다.
+RAW_SOURCE_TITLES = {}
+
 # 2026-09-29: GitHub Actions 러너(미국 리전)에서 나라장터 API를 부를 때마다 새로 TLS 연결을 맺느라
 # 공고당 업종/지역 조회가 로컬(0.2초)보다 몇 배 느렸다(63건 조회에 102초). 연결을 재사용하도록
 # 모듈 공용 Session을 쓴다. 병렬 조회(스레드) 수보다 커넥션 풀을 넉넉히 잡는다.
@@ -350,6 +358,7 @@ def fetch_bids_for_date_range(category: str = "용역", start_date=None, end_dat
     for item in items:
         _normalize_bid_org(item)
         _fill_missing_bid_deadline(item)
+    RAW_SOURCE_TITLES.update({item.get("bidNtceNm", ""): "g2b_bid" for item in items})
     return items
 
 
@@ -497,7 +506,9 @@ def fetch_pre_specs_for_date_range(start_date=None, end_date=None, page_size: in
     raw_items = _fetch_paginated(
         PRE_SPEC_LIST_OPERATION, begin_str, end_str, page_size, max_pages, base_url=PRE_SPEC_BASE_URL
     )
-    return [_normalize_pre_spec(item) for item in raw_items]
+    normalized = [_normalize_pre_spec(item) for item in raw_items]
+    RAW_SOURCE_TITLES.update({item.get("bidNtceNm", ""): "g2b_prespec" for item in normalized})
+    return normalized
 
 
 def analyze_classifications(category: str = "용역", days: int = 30):

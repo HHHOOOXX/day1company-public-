@@ -26,7 +26,7 @@ from .classify import (
 from .config import BIZINFO_API_URL, BIZINFO_SERVICE_KEY, NATIONWIDE_OVERRIDE_KEYWORDS, NON_METRO_REGION_ORGS
 from .doc_extract import extract_document_text, matches_exclude_keyword
 from .doc_extract import requires_ineligible_certificate as _doc_requires_ineligible_certificate
-from .g2b import COLLECTION_WARNINGS, get_lookback_range, get_with_retry
+from .g2b import COLLECTION_WARNINGS, RAW_SOURCE_TITLES, get_lookback_range, get_with_retry
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 # 2026-09-18 피드백: 데이원컴퍼니 본사 소재지는 서울이고, "지역제한이 서울이거나 없어야" 통과.
@@ -245,6 +245,7 @@ def fetch_bizinfo_for_date_range(start_date=None, end_date=None, page_size: int 
 
         time.sleep(0.2)
 
+    RAW_SOURCE_TITLES.update({item.get("bidNtceNm", ""): "bizinfo" for item in collected})
     print(f"[완료] 기업마당 {len(collected)}건 수집됨")
     return collected
 
