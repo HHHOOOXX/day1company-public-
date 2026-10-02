@@ -12,6 +12,7 @@
     --src-bid-bg: #E8EEFD; --src-bid-text: #2A4FB0;
     --src-prespec-bg: #F2E9FC; --src-prespec-text: #6B3FA0;
     --src-bizinfo-bg: #E4F6EC; --src-bizinfo-text: #1E7B45;
+    --src-agency-bg: #FDF0E4; --src-agency-text: #A0521C;
     --dday-urgent: #D8352B; --dday-soon: #C97A0A; --dday-normal: #5B5F68; --dday-passed: #ABB0B8;
   }
   * { box-sizing: border-box; }
@@ -82,6 +83,7 @@
   .src-bid { background: var(--src-bid-bg); color: var(--src-bid-text); }
   .src-prespec { background: var(--src-prespec-bg); color: var(--src-prespec-text); }
   .src-bizinfo { background: var(--src-bizinfo-bg); color: var(--src-bizinfo-text); }
+  .src-agency { background: var(--src-agency-bg); color: var(--src-agency-text); }
   .area-chip { display: inline-block; background: #F0F1F4; color: #4A4E57; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 7px; margin: 1px 3px 1px 0; white-space: nowrap; }
   .induty-chip { display: inline-block; background: #EAF1FF; color: #2A4FB0; font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 7px; margin-left: 5px; cursor: help; }
   .fit-chip { font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 8px; white-space: nowrap; display: inline-block; }
@@ -113,19 +115,19 @@
     <span class="dot">&middot;</span>
     <span>실제로 Slack에 발송되지 않았습니다</span>
     <span class="dot">&middot;</span>
-    <span>기준일: 2026-09-30 게시/등록분</span>
+    <span>기준일: 2026-10-01 게시/등록분</span>
   </div>
-  
+  <div class="warn-note">⚠️ 일부 데이터 수집 실패<div>- 서울신보 사업공고: 수집 실패 (ConnectTimeout)</div></div>
 
   <div class="page-head">
     <h1>📋 AX사업기획실 공고목록</h1>
-    <span class="period">2026-09-30 기준 · 총 13건</span>
+    <span class="period">2026-10-01 기준 · 총 8건</span>
   </div>
 
   <div class="stat-row">
-    <div class="stat-card"><div class="num">13</div><div class="lbl">전체 건수</div></div>
-    <div class="stat-card accent"><div class="num">9</div><div class="lbl">✅ 확실포함</div></div>
-    <div class="stat-card warn"><div class="num">4</div><div class="lbl">⚠ 확인필요</div></div>
+    <div class="stat-card"><div class="num">8</div><div class="lbl">전체 건수</div></div>
+    <div class="stat-card accent"><div class="num">5</div><div class="lbl">✅ 확실포함</div></div>
+    <div class="stat-card warn"><div class="num">3</div><div class="lbl">⚠ 확인필요</div></div>
     <div class="stat-card danger"><div class="num">0</div><div class="lbl">🔥 마감 3일 이내</div></div>
   </div>
 
@@ -137,6 +139,7 @@
       <button class="filter-btn" data-source="bid">입찰공고</button>
       <button class="filter-btn" data-source="pre_spec">사전규격</button>
       <button class="filter-btn" data-source="bizinfo">기업마당</button>
+      <button class="filter-btn" data-source="agency">기관공고</button>
     </div>
     <div class="filter-group" data-filter-group="tier">
       <button class="filter-btn active" data-tier="all">전체</button>
@@ -167,174 +170,109 @@
         </tr>
       </thead>
       <tbody>
-        <tr class="data-row" data-source="pre_spec" data-tier="include" data-deadline="2026-10-05" data-budget="69998500" data-search="동아대학교 anchor ai&amp;tech 재직자 실무 아카데미 프로그램 용역">
+        <tr class="data-row" data-source="pre_spec" data-tier="include" data-deadline="2026-10-06" data-budget="122500000" data-search="한국농어촌공사 충북지역본부 옥천.영동지사 인포지구 취약지역생활여건개조사업 지역역량강화용역">
   <td class="col-idx">1</td>
   <td><span class="src-chip src-prespec">사전규격</span></td>
-  <td class="col-org">동아대학교</td>
-  <td class="col-title"><a href="https://www.g2b.go.kr/pn/pnz/pnza/UntyAtchFile/downloadFile.do?bfSpecRegNo=R26BD00279547&amp;fileType=BFDTL&amp;fileSeq=1" target="_blank" rel="noopener">ANCHOR AI&amp;Tech 재직자 실무 아카데미 프로그램 용역</a></td>
-  <td class="col-area"><span class="area-chip">교육운영</span></td>
-  <td class="col-budget">6,999만원</td>
+  <td class="col-org">한국농어촌공사 충북지역본부 옥천.영동지사</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/pn/pnz/pnza/UntyAtchFile/downloadFile.do?bfSpecRegNo=R26BD00279897&amp;fileType=BFDTL&amp;fileSeq=1" target="_blank" rel="noopener">인포지구 취약지역생활여건개조사업 지역역량강화용역</a></td>
+  <td class="col-area"><span class="area-chip">연구·조사·성과분석</span></td>
+  <td class="col-budget">1.2억원</td>
   <td class="col-method">-</td>
   <td class="col-codes"><span class="code-empty">-</span></td>
-  <td class="col-posted">2026-09-30</td>
-  <td class="col-deadline"><span class="dday-badge dday-soon">10/5 (D-4)</span><div class="deadline-label">의견마감</div></td>
+  <td class="col-posted">2026-10-01</td>
+  <td class="col-deadline"><span class="dday-badge dday-soon">10/6 (D-4)</span><div class="deadline-label">의견마감</div></td>
   <td class="col-fit"><span class="fit-chip fit-include">✅ 확실포함</span></td>
 </tr>
-<tr class="data-row" data-source="pre_spec" data-tier="include" data-deadline="2026-10-05" data-budget="75000000" data-search="국립경국대학교 산학협력단 2026년 클라우드컴퓨팅 전문인력 양성기관 지원사업 교육 용역">
+<tr class="data-row" data-source="pre_spec" data-tier="include" data-deadline="2026-10-06" data-budget="100000" data-search="대림대학교 산학협력단 [대림대학교]2026년 신산업특화사업단_[semi-path(진로지원)] 반도체전공트랙워크숍 용역">
   <td class="col-idx">2</td>
   <td><span class="src-chip src-prespec">사전규격</span></td>
-  <td class="col-org">국립경국대학교 산학협력단</td>
-  <td class="col-title"><a href="https://www.g2b.go.kr/pn/pnz/pnza/UntyAtchFile/downloadFile.do?bfSpecRegNo=R26BD00279694&amp;fileType=BFDTL&amp;fileSeq=1" target="_blank" rel="noopener">2026년 클라우드컴퓨팅 전문인력 양성기관 지원사업 교육 용역</a></td>
-  <td class="col-area"><span class="area-chip">교육운영</span></td>
-  <td class="col-budget">7,500만원</td>
-  <td class="col-method">-</td>
-  <td class="col-codes"><span class="code-chip" title="업종제한사항(입찰공고) 또는 제안요청서 원문(사전규격)에서 확인된 보유 업종코드">9999</span></td>
-  <td class="col-posted">2026-09-30</td>
-  <td class="col-deadline"><span class="dday-badge dday-soon">10/5 (D-4)</span><div class="deadline-label">의견마감</div></td>
-  <td class="col-fit"><span class="fit-chip fit-include">✅ 확실포함</span></td>
-</tr>
-<tr class="data-row" data-source="pre_spec" data-tier="include" data-deadline="2026-10-05" data-budget="75500000" data-search="계명대학교 산학협력단 2026년 첨단산업 인재양성 부트캠프(ai분야) 하반기 몰입형 교육(콘텐츠·소프트웨어 ai 트랙) 운영 용역">
-  <td class="col-idx">3</td>
-  <td><span class="src-chip src-prespec">사전규격</span></td>
-  <td class="col-org">계명대학교 산학협력단</td>
-  <td class="col-title"><a href="https://www.g2b.go.kr/pn/pnz/pnza/UntyAtchFile/downloadFile.do?bfSpecRegNo=R26BD00279869&amp;fileType=BFDTL&amp;fileSeq=1" target="_blank" rel="noopener">2026년 첨단산업 인재양성 부트캠프(AI분야) 하반기 몰입형 교육(콘텐츠·소프트웨어 AI 트랙) 운영 용역</a></td>
-  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">콘텐츠 기획·개발·제작</span></td>
-  <td class="col-budget">7,550만원</td>
-  <td class="col-method">-</td>
-  <td class="col-codes"><span class="code-empty">-</span></td>
-  <td class="col-posted">2026-09-30</td>
-  <td class="col-deadline"><span class="dday-badge dday-soon">10/5 (D-4)</span><div class="deadline-label">의견마감</div></td>
-  <td class="col-fit"><span class="fit-chip fit-include">✅ 확실포함</span></td>
-</tr>
-<tr class="data-row" data-source="pre_spec" data-tier="include" data-deadline="2026-10-05" data-budget="73000000" data-search="계명대학교 산학협력단 2026년 첨단산업 인재양성 부트캠프(ai분야) 하반기 몰입형 교육(로봇 ai 트랙) 운영 용역">
-  <td class="col-idx">4</td>
-  <td><span class="src-chip src-prespec">사전규격</span></td>
-  <td class="col-org">계명대학교 산학협력단</td>
-  <td class="col-title"><a href="https://www.g2b.go.kr/pn/pnz/pnza/UntyAtchFile/downloadFile.do?bfSpecRegNo=R26BD00279870&amp;fileType=BFDTL&amp;fileSeq=1" target="_blank" rel="noopener">2026년 첨단산업 인재양성 부트캠프(AI분야) 하반기 몰입형 교육(로봇 AI 트랙) 운영 용역</a></td>
-  <td class="col-area"><span class="area-chip">교육운영</span></td>
-  <td class="col-budget">7,300만원</td>
-  <td class="col-method">-</td>
-  <td class="col-codes"><span class="code-empty">-</span></td>
-  <td class="col-posted">2026-09-30</td>
-  <td class="col-deadline"><span class="dday-badge dday-soon">10/5 (D-4)</span><div class="deadline-label">의견마감</div></td>
-  <td class="col-fit"><span class="fit-chip fit-include">✅ 확실포함</span></td>
-</tr>
-<tr class="data-row" data-source="pre_spec" data-tier="include" data-deadline="2026-10-05" data-budget="73000000" data-search="계명대학교 산학협력단 2026년 첨단산업 인재양성 부트캠프(ai분야) 하반기 몰입형 교육(바이오메디컬 ai 트랙) 운영 용역">
-  <td class="col-idx">5</td>
-  <td><span class="src-chip src-prespec">사전규격</span></td>
-  <td class="col-org">계명대학교 산학협력단</td>
-  <td class="col-title"><a href="https://www.g2b.go.kr/pn/pnz/pnza/UntyAtchFile/downloadFile.do?bfSpecRegNo=R26BD00279873&amp;fileType=BFDTL&amp;fileSeq=1" target="_blank" rel="noopener">2026년 첨단산업 인재양성 부트캠프(AI분야) 하반기 몰입형 교육(바이오메디컬 AI 트랙) 운영 용역</a></td>
-  <td class="col-area"><span class="area-chip">교육운영</span></td>
-  <td class="col-budget">7,300만원</td>
-  <td class="col-method">-</td>
-  <td class="col-codes"><span class="code-empty">-</span></td>
-  <td class="col-posted">2026-09-30</td>
-  <td class="col-deadline"><span class="dday-badge dday-soon">10/5 (D-4)</span><div class="deadline-label">의견마감</div></td>
-  <td class="col-fit"><span class="fit-chip fit-include">✅ 확실포함</span></td>
-</tr>
-<tr class="data-row" data-source="bizinfo" data-tier="review" data-deadline="2026-10-10" data-budget="0" data-search="과학기술정보통신부/정보통신산업진흥원 2026년 한-베트남 aiㆍ디지털 포럼 참가기업 모집 공고">
-  <td class="col-idx">6</td>
-  <td><span class="src-chip src-bizinfo">기업마당</span></td>
-  <td class="col-org">과학기술정보통신부/정보통신산업진흥원</td>
-  <td class="col-title"><a href="https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId=PBLN_000000000126876" target="_blank" rel="noopener">2026년 한-베트남 AIㆍ디지털 포럼 참가기업 모집 공고</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요</div></td>
+  <td class="col-org">대림대학교 산학협력단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/pn/pnz/pnza/UntyAtchFile/downloadFile.do?bfSpecRegNo=R26BD00280124&amp;fileType=BFDTL&amp;fileSeq=1" target="_blank" rel="noopener">[대림대학교]2026년 신산업특화사업단_[SEMI-Path(진로지원)] 반도체전공트랙워크숍 용역</a></td>
   <td class="col-area">-</td>
+  <td class="col-budget">10만원</td>
+  <td class="col-method">-</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-10-01</td>
+  <td class="col-deadline"><span class="dday-badge dday-soon">10/6 (D-4)</span><div class="deadline-label">의견마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-include">✅ 확실포함</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="include" data-deadline="2026-10-12" data-budget="60000000" data-search="연암공과대학교산학협력단 연암공과대학교 2027학년도 교육과정 개발 및 개편 연구 용역">
+  <td class="col-idx">3</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">연암공과대학교산학협력단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01754120&amp;bidPbancOrd=000" target="_blank" rel="noopener">연암공과대학교 2027학년도 교육과정 개발 및 개편 연구 용역</a></td>
+  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">콘텐츠 기획·개발·제작</span><span class="area-chip">연구·조사·성과분석</span></td>
+  <td class="col-budget">6,000만원</td>
+  <td class="col-method">일반경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-10-01</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">10/12 (D-10)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-include">✅ 확실포함</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="include" data-deadline="2026-10-14" data-budget="50000000" data-search="건국대학교 산학협력단 [2026년 공공기술기반 시장연계 창업탐색 지원사업(tex-corps)] 사업화 코칭·멘토링 교육 3~5단계 용역(product·design·deal-fit)">
+  <td class="col-idx">4</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">건국대학교 산학협력단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01753343&amp;bidPbancOrd=000" target="_blank" rel="noopener">[2026년 공공기술기반 시장연계 창업탐색 지원사업(TeX-Corps)] 사업화 코칭·멘토링 교육 3~5단계 용역(Product·Design·Deal-Fit)</a></td>
+  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">창업지원</span></td>
+  <td class="col-budget">5,000만원</td>
+  <td class="col-method">일반경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-10-01</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">10/14 (D-12)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-include">✅ 확실포함</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-10-14" data-budget="799886406" data-search="가천대학교 ai타워ㆍ지하주차장 신축공사 폐목재 및 페합성수지 처리 용역">
+  <td class="col-idx">5</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">가천대학교</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01752247&amp;bidPbancOrd=002" target="_blank" rel="noopener">AI타워ㆍ지하주차장 신축공사 폐목재 및 페합성수지 처리 용역</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요</div></td>
+  <td class="col-area">-</td>
+  <td class="col-budget">8억원</td>
+  <td class="col-method">일반경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-10-01</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">10/14 (D-12)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-10-16" data-budget="80000000" data-search="한림대학교 한림대학교 의학교육 ontology 및 ekg 구축 위탁 연구 업체 선정">
+  <td class="col-idx">6</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">한림대학교</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01753085&amp;bidPbancOrd=000" target="_blank" rel="noopener">한림대학교 의학교육 Ontology 및 EKG 구축 위탁 연구 업체 선정</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요</div></td>
+  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">연구·조사·성과분석</span></td>
+  <td class="col-budget">8,000만원</td>
+  <td class="col-method">일반경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
+  <td class="col-codes"><span class="code-chip" title="업종제한사항(입찰공고) 또는 제안요청서 원문(사전규격)에서 확인된 보유 업종코드">1468</span></td>
+  <td class="col-posted">2026-10-01</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">10/16 (D-14)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-10-20" data-budget="25000000" data-search="가천대학교 산학협력단 특허 기술분석 및 클레임차트 분석 용역">
+  <td class="col-idx">7</td>
+  <td><span class="src-chip src-bid">입찰공고</span></td>
+  <td class="col-org">가천대학교 산학협력단</td>
+  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01753587&amp;bidPbancOrd=000" target="_blank" rel="noopener">특허 기술분석 및 클레임차트 분석 용역</a><div class="row-reason">제목에 구체적인 교육/양성 신호 키워드가 없음(학습된 키워드로만 매칭) — 실제 사업 내용 확인 필요</div></td>
+  <td class="col-area">-</td>
+  <td class="col-budget">2,500만원</td>
+  <td class="col-method">일반경쟁</td>
+  <td class="col-codes"><span class="code-empty">-</span></td>
+  <td class="col-posted">2026-10-01</td>
+  <td class="col-deadline"><span class="dday-badge dday-normal">10/20 개찰 (D-18)</span><div class="deadline-label">마감</div></td>
+  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
+</tr>
+<tr class="data-row" data-source="bizinfo" data-tier="include" data-deadline="9999-99-99" data-budget="0" data-search="경기도/경기신용보증재단 [경기] 평택시 청년창업 특례보증 및 이차보전 지원 수정 공고">
+  <td class="col-idx">8</td>
+  <td><span class="src-chip src-bizinfo">기업마당</span></td>
+  <td class="col-org">경기도/경기신용보증재단</td>
+  <td class="col-title"><a href="https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId=PBLN_000000000126943" target="_blank" rel="noopener">[경기] 평택시 청년창업 특례보증 및 이차보전 지원 수정 공고</a></td>
+  <td class="col-area"><span class="area-chip">창업지원</span></td>
   <td class="col-budget">-</td>
   <td class="col-method">-</td>
   <td class="col-codes"><span class="code-empty">-</span></td>
-  <td class="col-posted">2026-09-30</td>
-  <td class="col-deadline"><span class="dday-badge dday-normal">10/10 (D-9)</span><div class="deadline-label">신청마감</div></td>
-  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
-</tr>
-<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-10-12" data-budget="83800000" data-search="연세대학교 연세대학교 교육혁신 거버넌스 및 지속가능 발전 방안 연구">
-  <td class="col-idx">7</td>
-  <td><span class="src-chip src-bid">입찰공고</span></td>
-  <td class="col-org">연세대학교</td>
-  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01749961&amp;bidPbancOrd=000" target="_blank" rel="noopener">연세대학교 교육혁신 거버넌스 및 지속가능 발전 방안 연구</a><div class="row-reason">제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요</div></td>
-  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">연구·조사·성과분석</span><span class="area-chip">컨설팅</span></td>
-  <td class="col-budget">8,380만원</td>
-  <td class="col-method">제한경쟁</td>
-  <td class="col-codes"><span class="code-empty">-</span></td>
-  <td class="col-posted">2026-09-30</td>
-  <td class="col-deadline"><span class="dday-badge dday-normal">10/12 (D-11)</span><div class="deadline-label">마감</div></td>
-  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
-</tr>
-<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-10-12" data-budget="150000000" data-search="성균관대학교 자연과학캠퍼스 부총장 산학협력단 2026년 성균관대학교 기술사업화 및 ip 관리 전주기 지원 사업">
-  <td class="col-idx">8</td>
-  <td><span class="src-chip src-bid">입찰공고</span></td>
-  <td class="col-org">성균관대학교 자연과학캠퍼스 부총장 산학협력단</td>
-  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01750533&amp;bidPbancOrd=000" target="_blank" rel="noopener">2026년 성균관대학교 기술사업화 및 IP 관리 전주기 지원 사업</a><div class="row-reason">제목에 구체적인 교육/양성 신호 키워드가 없음(학습된 키워드로만 매칭) — 실제 사업 내용 확인 필요</div></td>
-  <td class="col-area">-</td>
-  <td class="col-budget">1.5억원</td>
-  <td class="col-method">일반경쟁</td>
-  <td class="col-codes"><span class="code-empty">-</span></td>
-  <td class="col-posted">2026-09-30</td>
-  <td class="col-deadline"><span class="dday-badge dday-normal">10/12 개찰 (D-11)</span><div class="deadline-label">마감</div></td>
-  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
-</tr>
-<tr class="data-row" data-source="bid" data-tier="include" data-deadline="2026-10-12" data-budget="220000000" data-search="연암대학교 산학협력단 연암대학교 직업계고-전문대학 지원사업 직업계고 연계 교육과정 개발·개편 위탁업체 선정">
-  <td class="col-idx">9</td>
-  <td><span class="src-chip src-bid">입찰공고</span></td>
-  <td class="col-org">연암대학교 산학협력단</td>
-  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01749956&amp;bidPbancOrd=000" target="_blank" rel="noopener">연암대학교 직업계고-전문대학 지원사업 직업계고 연계 교육과정 개발·개편 위탁업체 선정</a></td>
-  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">콘텐츠 기획·개발·제작</span></td>
-  <td class="col-budget">2.2억원</td>
-  <td class="col-method">일반경쟁</td>
-  <td class="col-codes"><span class="code-empty">-</span></td>
-  <td class="col-posted">2026-09-30</td>
-  <td class="col-deadline"><span class="dday-badge dday-normal">10/12 개찰 (D-11)</span><div class="deadline-label">마감</div></td>
+  <td class="col-posted">2026-10-01</td>
+  <td class="col-deadline"><span class="dday-badge dday-unknown">상시 접수</span><div class="deadline-label">신청마감</div></td>
   <td class="col-fit"><span class="fit-chip fit-include">✅ 확실포함</span></td>
-</tr>
-<tr class="data-row" data-source="bid" data-tier="include" data-deadline="2026-10-12" data-budget="90000000" data-search="서원대학교 2026학년도 서원대학교 대학혁신지원사업 k-mooc 자율참여강좌 콘텐츠 개발 용역">
-  <td class="col-idx">10</td>
-  <td><span class="src-chip src-bid">입찰공고</span></td>
-  <td class="col-org">서원대학교</td>
-  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01751897&amp;bidPbancOrd=000" target="_blank" rel="noopener">2026학년도 서원대학교 대학혁신지원사업 K-MOOC 자율참여강좌 콘텐츠 개발 용역</a></td>
-  <td class="col-area"><span class="area-chip">콘텐츠 기획·개발·제작</span><span class="area-chip">전략수립</span></td>
-  <td class="col-budget">9,000만원</td>
-  <td class="col-method">제한경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
-  <td class="col-codes"><span class="code-chip" title="업종제한사항(입찰공고) 또는 제안요청서 원문(사전규격)에서 확인된 보유 업종코드">1469</span></td>
-  <td class="col-posted">2026-09-30</td>
-  <td class="col-deadline"><span class="dday-badge dday-normal">10/12 개찰 (D-11)</span><div class="deadline-label">마감</div></td>
-  <td class="col-fit"><span class="fit-chip fit-include">✅ 확실포함</span></td>
-</tr>
-<tr class="data-row" data-source="bid" data-tier="include" data-deadline="2026-10-20" data-budget="28000000" data-search="가천대학교 산학협력단 가천대학교 ai부트캠프 사업 생성형 ai 심화 교육 기획·운영 위탁 용역(2026-2학기)">
-  <td class="col-idx">11</td>
-  <td><span class="src-chip src-bid">입찰공고</span></td>
-  <td class="col-org">가천대학교 산학협력단</td>
-  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01751800&amp;bidPbancOrd=000" target="_blank" rel="noopener">가천대학교 AI부트캠프 사업 생성형 AI 심화 교육 기획·운영 위탁 용역(2026-2학기)</a></td>
-  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">콘텐츠 기획·개발·제작</span></td>
-  <td class="col-budget">2,800만원</td>
-  <td class="col-method">제한경쟁</td>
-  <td class="col-codes"><span class="code-empty">-</span></td>
-  <td class="col-posted">2026-09-30</td>
-  <td class="col-deadline"><span class="dday-badge dday-normal">10/20 개찰 (D-19)</span><div class="deadline-label">마감</div></td>
-  <td class="col-fit"><span class="fit-chip fit-include">✅ 확실포함</span></td>
-</tr>
-<tr class="data-row" data-source="bid" data-tier="include" data-deadline="2026-10-21" data-budget="1214898800" data-search="인사혁신처 국가공무원인재개발원 2027년 나라배움터 이러닝 콘텐츠 및 ai 교육 패키지 운영 사업">
-  <td class="col-idx">12</td>
-  <td><span class="src-chip src-bid">입찰공고</span></td>
-  <td class="col-org">인사혁신처 국가공무원인재개발원</td>
-  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01750037&amp;bidPbancOrd=000" target="_blank" rel="noopener">2027년 나라배움터 이러닝 콘텐츠 및 AI 교육 패키지 운영 사업</a></td>
-  <td class="col-area"><span class="area-chip">교육운영</span><span class="area-chip">콘텐츠 기획·개발·제작</span></td>
-  <td class="col-budget">12.1억원</td>
-  <td class="col-method">일반경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
-  <td class="col-codes"><span class="code-chip" title="업종제한사항(입찰공고) 또는 제안요청서 원문(사전규격)에서 확인된 보유 업종코드">6527</span><span class="code-chip" title="업종제한사항(입찰공고) 또는 제안요청서 원문(사전규격)에서 확인된 보유 업종코드">6529</span></td>
-  <td class="col-posted">2026-09-30</td>
-  <td class="col-deadline"><span class="dday-badge dday-normal">10/21 (D-20)</span><div class="deadline-label">마감</div></td>
-  <td class="col-fit"><span class="fit-chip fit-include">✅ 확실포함</span></td>
-</tr>
-<tr class="data-row" data-source="bid" data-tier="review" data-deadline="2026-11-03" data-budget="5308000000" data-search="경기교통공사 2027년 경기도 광역이동지원센터 콜센터 운영 용역">
-  <td class="col-idx">13</td>
-  <td><span class="src-chip src-bid">입찰공고</span></td>
-  <td class="col-org">경기교통공사</td>
-  <td class="col-title"><a href="https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01733095&amp;bidPbancOrd=001" target="_blank" rel="noopener">2027년 경기도 광역이동지원센터 콜센터 운영 용역</a><div class="row-reason">발주기관 유형이 대학교/지자체 핵심군이 아님(공사/공단/협회/연구원 등) — 실제 사업 대상인지 확인 필요 / 제목이 &#x27;운영/교육/AI&#x27; 같은 범용 단어로만 매칭됨 — 교육·콘텐츠 사업이 맞는지 확인 필요</div></td>
-  <td class="col-area"><span class="area-chip">교육운영</span></td>
-  <td class="col-budget">53.1억원</td>
-  <td class="col-method">일반경쟁<span class="induty-chip" title="업종제한(제한경쟁) 공고 — 보유 업종코드로 참가자격 확인됨">업종제한</span></td>
-  <td class="col-codes"><span class="code-chip" title="업종제한사항(입찰공고) 또는 제안요청서 원문(사전규격)에서 확인된 보유 업종코드">9999</span></td>
-  <td class="col-posted">2026-09-30</td>
-  <td class="col-deadline"><span class="dday-badge dday-normal">11/3 (D-33)</span><div class="deadline-label">마감</div></td>
-  <td class="col-fit"><span class="fit-chip fit-review">⚠ 확인필요</span></td>
 </tr>
       </tbody>
     </table>
