@@ -1,0 +1,35 @@
+name: Slack Bot Test
+
+# 슬랙 봇 토큰(SLACK_BOT_TOKEN) 설정 확인용. 지정한 곳에 테스트 메시지 1개와 그 스레드 댓글 1개를 보낸다.
+# target에 사용자 ID(U…)를 넣으면 봇과의 DM으로, 채널 ID(C…)를 넣으면 그 채널로, 비우면 SLACK_CHANNEL_ID로 보낸다.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "보낼 곳: 사용자 ID(U…) 또는 채널 ID(C…). 비우면 SLACK_CHANNEL_ID"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  slack-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send test message and thread reply
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          # 입력값을 셸 스크립트에 직접 끼워 넣지 않고 환경변수로 넘긴다(스크립트 인젝션 방지).
+          TARGET: ${{ inputs.target }}
+        run: python test_g2b_api.py slack-test "$TARGET"

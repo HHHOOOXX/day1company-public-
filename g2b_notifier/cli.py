@@ -17,6 +17,7 @@
   bizinfo-discover                    - 기업마당 원본 필드 탐색 (BIZINFO_SERVICE_KEY 필요)
   alio-discover                       - ALIO 공공기관 정보 원본 필드 탐색 (ALIO_SERVICE_KEY 필요)
   agency-discover                     - 기관 홈페이지 게시판(NIPA/NIA/중진공 등) 목록 파싱 결과 확인
+  slack-test [채널ID|사용자ID]         - 봇 토큰으로 테스트 메시지 + 스레드 댓글 발송(기본: SLACK_CHANNEL_ID)
   proposals                           - 제안 검토 이력(Drive [제안 및 검토] 폴더 ↔ 공고 연결) 현황
   proposals-sync                      - Drive 폴더를 지금 읽어 제안 이력만 갱신 (GOOGLE_SERVICE_ACCOUNT_JSON 필요)
   (인자 없음 / 카테고리만)             - 최근 입찰공고 미리보기
@@ -428,6 +429,7 @@ def run_daily_notification(
         conn.close()
         return
 
+    sent = False
     if use_bot:
         ts = post_with_bot(message, blocks=blocks)
         sent = ts is not None
@@ -435,7 +437,15 @@ def run_daily_notification(
             # 스레드 댓글은 실패해도 본문 발송은 이미 끝났으므로 발송 기록은 남긴다(목록은 대시보드에도 있음).
             if post_with_bot(overflow_text, blocks=chunk_mrkdwn_blocks(overflow_text), thread_ts=ts) is None:
                 print("[경고] 카드에 못 넣은 공고 스레드 댓글 발송 실패 — 대시보드에서 확인 가능")
-    else:
+        if not sent:
+            # 2026-10-06: 봇 토큰이 틀렸거나 봇이 채널에 초대되지 않았으면(not_in_channel) 그날 메시지가 통째로 안 나가므로
+            # 기존 웹훅으로 보낸다. 넘친 공고는 웹훅 방식대로 본문 맨 아래 목록으로 붙인다.
+            print("[슬랙] 봇 발송 실패 — 웹훅으로 다시 보냅니다")
+            if overflow_text:
+                message = message.replace(f"\n\n{summary_text}", f"\n\n{overflow_text}\n\n{summary_text}")
+                tail = 2 if len(blocks) >= 2 and blocks[-2].get("type") == "divider" else 1
+                blocks = blocks[:-tail] + [divider()] + chunk_mrkdwn_blocks(overflow_text) + blocks[-tail:]
+    if not sent:
         sent = send_to_slack(message, blocks=blocks)
     if sent:
         db.mark_notified(conn, [pid for pid, _ in all_pairs])
@@ -511,6 +521,18 @@ def main():
             traceback.print_exc()
             raise
         return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "slack-test":
+        # 봇 토큰 설정 확인용: 대상(채널 ID 또는 사용자 ID — 사용자 ID면 봇과의 DM)에 테스트 메시지와 스레드 댓글을 보낸다.
+        target = sys.argv[2] if len(sys.argv) > 2 and sys.argv[2] else None
+        if not SLACK_BOT_TOKEN:
+            print("[에러] SLACK_BOT_TOKEN이 없습니다.")
+            sys.exit(1)
+        ts = post_with_bot("[테스트] 공고 알림 봇 연결 확인 메시지입니다.", channel=target)
+        if ts is None:
+            sys.exit(1)
+        reply = post_with_bot("[테스트] 카드에 못 넣은 공고는 이렇게 스레드 댓글로 달립니다.", thread_ts=ts, channel=target)
+        sys.exit(0 if reply else 1)
 
     if len(sys.argv) > 1 and sys.argv[1] == "classify":
         _require_g2b_key()

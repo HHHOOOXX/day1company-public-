@@ -301,12 +301,14 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
     return blocks
 
 
-def post_with_bot(text: str, blocks: list = None, thread_ts: str = None, max_retries: int = 3):
+def post_with_bot(text: str, blocks: list = None, thread_ts: str = None, max_retries: int = 3, channel: str = None):
     """봇 토큰(config.SLACK_BOT_TOKEN)으로 chat.postMessage를 보낸다. 성공하면 메시지 ts(스레드 댓글을 달 때
-    thread_ts로 쓴다), 실패하면 None. 웹훅과 달리 HTTP 200이어도 응답 JSON의 ok가 false일 수 있다."""
+    thread_ts로 쓴다), 실패하면 None. 웹훅과 달리 HTTP 200이어도 응답 JSON의 ok가 false일 수 있다
+    (예: 봇이 채널에 초대되지 않았으면 not_in_channel). channel을 주면 SLACK_CHANNEL_ID 대신 그곳으로 보낸다
+    (사용자 ID를 주면 그 사람과 봇의 DM)."""
     from .config import SLACK_BOT_TOKEN, SLACK_CHANNEL_ID
 
-    payload = {"channel": SLACK_CHANNEL_ID, "text": text, "unfurl_links": False}
+    payload = {"channel": channel or SLACK_CHANNEL_ID, "text": text, "unfurl_links": False}
     if blocks:
         payload["blocks"] = blocks
     if thread_ts:
