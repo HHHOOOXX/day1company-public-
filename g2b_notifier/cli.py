@@ -247,7 +247,8 @@ def run_daily_notification(
             pre_specs = []
         pre_spec_pairs = _filter_unnotified(conn, "g2b_prespec", pre_specs, today_str)
         all_pairs += pre_spec_pairs
-        urgent_entries += [("사전규격", "의견", item) for _, item in pre_spec_pairs]
+        # 2026-10-06: "의견 10/7"이 입찰 마감처럼 보여 "입찰 전 의견마감"으로 표시한다.
+        urgent_entries += [("사전규격", "입찰 전 의견마감", item) for _, item in pre_spec_pairs]
 
     if include_bizinfo and BIZINFO_SERVICE_KEY:
         try:

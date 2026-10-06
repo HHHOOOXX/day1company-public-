@@ -16,7 +16,7 @@ PREVIEW_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 _SOURCE_META = {
     "bid": {"label": "입찰공고", "cls": "src-bid", "date_label": "마감"},
-    "pre_spec": {"label": "사전규격", "cls": "src-prespec", "date_label": "의견마감"},
+    "pre_spec": {"label": "사전규격", "cls": "src-prespec", "date_label": "입찰 전 의견마감"},
     "bizinfo": {"label": "기업마당", "cls": "src-bizinfo", "date_label": "신청마감"},
     "agency": {"label": "기관공고", "cls": "src-agency", "date_label": "마감"},
 }

@@ -113,10 +113,17 @@ def _pick_top(entries: list, today, top_n: int) -> list:
     return _rank_entries(entries, today)[:top_n]
 
 
+# 사전규격 entries의 source_tag(cli.py). 사전규격 날짜는 입찰 마감이 아니라 규격서 의견등록 마감이다.
+PRESPEC_TAG = "사전규격"
+
+
 def _rank_entries(entries: list, today) -> list:
     """_pick_top의 정렬 규칙으로 전체를 줄 세운다(마감 지난 건 제외).
-    2026-10-06: 우선검토(_priority_review) 건을 맨 앞에 둔다 — 마감순으로만 다시 정렬하면 호출부에서 앞에 모아 둔
-    우선검토 건이 뒤로 밀려 카드에서 빠진다."""
+    순서: 입찰공고·기업마당·기관공고 → 사전규격, 각 묶음 안에서는 우선검토 → 마감 빠른 순 → 마감일 없는 건.
+    2026-10-06: 우선검토(_priority_review) 건을 앞에 둔다 — 마감순으로만 다시 정렬하면 호출부에서 앞에 모아 둔
+    우선검토 건이 뒤로 밀려 카드에서 빠진다.
+    같은 날 요청: 사전규격을 입찰공고보다 뒤에 둔다. 사전규격의 의견마감은 거의 항상 7일 미만이라(9/22 확인 91%)
+    마감순으로 섞으면 카드 맨 앞을 다 차지하고 메시지가 임박한 공고투성이로 보였다(10/2 재조회: 33건 중 18건)."""
     dated, undated = [], []
     for tag, label, item in entries:
         d = deadline_date(item)
@@ -126,7 +133,7 @@ def _rank_entries(entries: list, today) -> list:
             dated.append((d, tag, label, item))
     dated.sort(key=lambda x: x[0])
     ranked = dated + undated
-    return [x for x in ranked if x[3].get("_priority_review")] + [x for x in ranked if not x[3].get("_priority_review")]
+    return sorted(ranked, key=lambda x: (x[1] == PRESPEC_TAG, not x[3].get("_priority_review")))
 
 
 def split_top(entries: list, today, top_n: int):
@@ -264,7 +271,10 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
         title_line = f"{rank_marker} *<{url}|{item_title}>*" if url else f"{rank_marker} *{item_title}*"
 
         date_str, delta, passed = dday_parts(item, today)
-        if delta is None:
+        if _tag == PRESPEC_TAG:
+            # 2026-10-06 요청: 의견마감은 입찰 마감이 아니므로 D-day·긴급도 신호등 없이 날짜만 보여준다.
+            dday_text = f"`{date_str}`"
+        elif delta is None:
             dday_text = f"`{date_str}`"
         elif passed:
             dday_text = f"`{date_str} 마감`"
@@ -272,7 +282,8 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
             dday_text = f"`{date_str} (D-day)`"
         else:
             dday_text = f"`{date_str} (D-{delta})`"
-        dday_text = f"{_urgency_emoji(delta)} {dday_text}"
+        if _tag != PRESPEC_TAG:
+            dday_text = f"{_urgency_emoji(delta)} {dday_text}"
 
         budget_text = format_money(item.get("asignBdgtAmt", ""))
         meta_line = f"{org} · {budget_text} · {item.get('_deadline_basis') or label} {dday_text}"
