@@ -39,6 +39,7 @@ from .classify import (
     is_relevant_bid,
     passes_deadline_gate,
 )
+from .config import KR_PROXY_URL
 from .g2b import COLLECTION_WARNINGS, RAW_SOURCE_TITLES, _deadline_exceeded, get_lookback_range
 from .rag_screen import screen_items
 
@@ -207,13 +208,18 @@ def _fetch_kosmes_notice() -> list:
     return rows
 
 
+def _kr_proxies():
+    """국내 IP가 필요한 사이트(서울신보)용 프록시 설정. config.KR_PROXY_URL이 없으면 None(직접 접속)."""
+    return {"http": KR_PROXY_URL, "https": KR_PROXY_URL} if KR_PROXY_URL else None
+
+
 def _fetch_seoulshinbo() -> list:
     """서울신용보증재단 사업공고(mng_cd=STRY0006). 상권지원 사업공고와 재무팀 자체 입찰공고
     ("[제2026재무팀-66호]입찰공고(...용역)")가 한 게시판에 같이 올라온다. 서버 인증서 체인이 불완전해
     인증서 검증을 끈다(공개 게시판 읽기만 하므로 위험 낮음). 상세는 bbs.goView(페이지, 글번호) ->
     /wbase/contents/bbs/view/{글번호}.do (pageIndex 없이 열면 HTTP 500)."""
     page = HTTP.get("https://www.seoulshinbo.co.kr/wbase/contents/bbs/list.do?mng_cd=STRY0006",
-                    timeout=_TIMEOUT, verify=False).text
+                    timeout=_TIMEOUT, verify=False, proxies=_kr_proxies()).text
     rows = []
     for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", page, re.S):
         m = re.search(r"bbs\.goView\('\d+',\s*'(\d+)'\)\"><span[^>]*>(.*?)</span>", tr, re.S)
@@ -355,8 +361,9 @@ _BODY_END_RE = re.compile(r"만족도 조사|이 페이지에서 제공하는 �
 def fetch_detail_text(item: dict) -> str:
     """상세페이지 본문 텍스트(스크립트·스타일 제거). 실패하면 빈 문자열.
     IITP·중진공·소상공인24는 본문을 자바스크립트로 그려서 여기선 메뉴 텍스트 정도만 나온다."""
+    proxies = _kr_proxies() if "seoulshinbo.co.kr" in item["bidNtceDtlUrl"] else None
     try:
-        page = HTTP.get(item["bidNtceDtlUrl"], timeout=_TIMEOUT, verify=False).text
+        page = HTTP.get(item["bidNtceDtlUrl"], timeout=_TIMEOUT, verify=False, proxies=proxies).text
     except requests.exceptions.RequestException:
         return ""
     page = re.sub(r"<(script|style|noscript|head)[^>]*>.*?</\1>", " ", page, flags=re.S | re.I)

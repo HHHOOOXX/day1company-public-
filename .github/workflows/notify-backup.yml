@@ -11,6 +11,12 @@ on:
     - cron: "7 3 * * 1-5"
   workflow_dispatch: {}
 
+# 정시 실행·백업·재조회 실행이 동시에 돌지 않게 한 줄로 세운다(두 워크플로 공통 그룹). 정시 실행이 첨부 재시도로
+# 길어져도 백업은 그게 끝나고 DB가 커밋된 뒤에 시작해서, 이미 발송된 날이면 조용히 종료한다(중복 발송 방지).
+concurrency:
+  group: g2b-notify
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -31,6 +37,11 @@ jobs:
         env:
           G2B_SERVICE_KEY: ${{ secrets.G2B_SERVICE_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # 선택: 봇 토큰+채널 ID가 있으면 카드에 못 넣은 공고를 스레드 댓글로 단다(없으면 본문 맨 아래 목록).
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          # 선택: 국내 서버 HTTP 프록시(서울신보 홈페이지가 해외 IP를 막아서 그 사이트 요청만 이걸로 보낸다).
+          KR_PROXY_URL: ${{ secrets.KR_PROXY_URL }}
           BIZINFO_SERVICE_KEY: ${{ secrets.BIZINFO_SERVICE_KEY }}
           ALIO_SERVICE_KEY: ${{ secrets.ALIO_SERVICE_KEY }}
           # Drive "[제안 및 검토]" 폴더 → 제안 이력 자동 기록(g2b_notifier/proposals.py). 서비스 계정 키 JSON 전체.

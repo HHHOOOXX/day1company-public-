@@ -57,6 +57,17 @@ DASHBOARD_URL = os.getenv("DASHBOARD_URL", "").strip()
 # 그 문자열을 넣으면 된다.
 SLACK_MENTION = os.getenv("SLACK_MENTION", "<!channel>").strip() or "<!channel>"
 
+# 2026-10-06: 카드에 못 넣은 공고를 메시지 스레드 댓글로 보내려면 Incoming Webhook이 아니라 봇 토큰이 필요하다
+# (웹훅은 보낸 메시지의 ts를 돌려주지 않아 thread_ts를 지정할 수 없다). 둘 다 있으면 chat.postMessage로 보내고
+# 남은 공고를 스레드에 단다. 없으면 기존 웹훅으로 보내고 남은 공고는 본문 맨 아래에 목록으로 붙인다.
+SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "").strip()
+SLACK_CHANNEL_ID = os.getenv("SLACK_CHANNEL_ID", "").strip()
+
+# 2026-10-06: 서울신용보증재단 홈페이지는 해외 IP 접속을 막는지 GitHub Actions 러너(미국)에서는 매번 접속 시간
+# 초과가 난다(국내 PC에서는 0.3초에 정상 응답). 국내 서버의 HTTP 프록시 주소(http://아이디:비밀번호@호스트:포트)를
+# 넣으면 그 사이트 요청만 프록시로 보낸다. 없으면 직접 접속한다(국내에서 실행할 때는 그대로 동작).
+KR_PROXY_URL = os.getenv("KR_PROXY_URL", "").strip()
+
 # 2026-09-23 피드백: 설/추석 등 공휴일·연휴엔 발주기관이 쉬어서 신규 공고가 거의 없고, 있어도
 # 팀원이 확인할 수 있는 날이 아니라서 슬랙 발송 자체를 건너뛴다("당장 내일 추석연휴", "10월에도
 # 평일에 공휴일 있음" — 개천절 대체공휴일 10/5, 한글날 10/9). "관공서의 공휴일에 관한 규정" 기준

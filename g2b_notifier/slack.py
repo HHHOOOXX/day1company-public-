@@ -110,6 +110,13 @@ def _pick_top(entries: list, today, top_n: int) -> list:
     2026-09-29: 예전엔 마감일 없는 건을 통째로 버렸는데, 호출부(cli.py)가 이미 10건으로 잘라 넘긴
     뒤라 카드가 10건 -> 7건으로 줄고, 제안 이력 기관이라 1순위로 뽑힌 가천대 공고까지 사라졌다.
     협상계약 등은 bidClseDt가 비어 오는 경우가 있어 마감일 유무로 관심도를 판단할 수 없다."""
+    return _rank_entries(entries, today)[:top_n]
+
+
+def _rank_entries(entries: list, today) -> list:
+    """_pick_top의 정렬 규칙으로 전체를 줄 세운다(마감 지난 건 제외).
+    2026-10-06: 우선검토(_priority_review) 건을 맨 앞에 둔다 — 마감순으로만 다시 정렬하면 호출부에서 앞에 모아 둔
+    우선검토 건이 뒤로 밀려 카드에서 빠진다."""
     dated, undated = [], []
     for tag, label, item in entries:
         d = deadline_date(item)
@@ -118,7 +125,37 @@ def _pick_top(entries: list, today, top_n: int) -> list:
         elif d >= today:
             dated.append((d, tag, label, item))
     dated.sort(key=lambda x: x[0])
-    return (dated + undated)[:top_n]
+    ranked = dated + undated
+    return [x for x in ranked if x[3].get("_priority_review")] + [x for x in ranked if not x[3].get("_priority_review")]
+
+
+def split_top(entries: list, today, top_n: int):
+    """카드로 보여줄 상위 top_n건과 카드에 못 들어간 나머지를 (top, rest)로 나눈다. 둘 다 (tag, label, item) 목록."""
+    ranked = [(tag, label, item) for _d, tag, label, item in _rank_entries(entries, today)]
+    return ranked[:top_n], ranked[top_n:]
+
+
+def format_overflow_text(sections: list, today) -> str:
+    """카드에 못 넣은 공고 목록 텍스트(스레드 댓글 또는 본문 맨 아래용).
+    sections: [(섹션 제목, [(tag, label, item), ...]), ...] — 빈 섹션은 건너뛴다."""
+    parts = []
+    for title, entries in sections:
+        if not entries:
+            continue
+        lines = [f"*{title} — 카드에 못 넣은 {len(entries)}건*"]
+        for idx, (tag, label, item) in enumerate(entries, 1):
+            d = deadline_date(item)
+            url = item.get("bidNtceDtlUrl", "")
+            item_title = item.get("bidNtceNm", "")
+            title_part = f"<{url}|{item_title}>" if url else item_title
+            date_text = f"{d.month}/{d.day}" if d else "미정"
+            priority = "  `우선검토`" if item.get("_priority_review") else ""
+            lines.append(
+                f"{idx}. *[{item.get('ntceInsttNm', '')}]* {title_part} — "
+                f"{item.get('_deadline_basis') or label} {date_text}  `{tag}`{priority}"
+            )
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts)
 
 
 def format_urgent_digest(entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP") -> str:
@@ -251,6 +288,40 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
         )
 
     return blocks
+
+
+def post_with_bot(text: str, blocks: list = None, thread_ts: str = None, max_retries: int = 3):
+    """봇 토큰(config.SLACK_BOT_TOKEN)으로 chat.postMessage를 보낸다. 성공하면 메시지 ts(스레드 댓글을 달 때
+    thread_ts로 쓴다), 실패하면 None. 웹훅과 달리 HTTP 200이어도 응답 JSON의 ok가 false일 수 있다."""
+    from .config import SLACK_BOT_TOKEN, SLACK_CHANNEL_ID
+
+    payload = {"channel": SLACK_CHANNEL_ID, "text": text, "unfurl_links": False}
+    if blocks:
+        payload["blocks"] = blocks
+    if thread_ts:
+        payload["thread_ts"] = thread_ts
+    headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.post("https://slack.com/api/chat.postMessage", json=payload, headers=headers, timeout=10)
+        except requests.exceptions.RequestException as exc:
+            print(f"[슬랙] 연결 실패: {exc} (시도 {attempt}/{max_retries})")
+            time.sleep(2 ** (attempt - 1))
+            continue
+        if resp.status_code == 429:
+            time.sleep(int(resp.headers.get("Retry-After", "1")))
+            continue
+        try:
+            data = resp.json()
+        except ValueError:
+            data = {}
+        if data.get("ok"):
+            print("[슬랙] 발송 성공" + (" (스레드 댓글)" if thread_ts else ""))
+            return data.get("ts")
+        print(f"[슬랙] 발송 실패: HTTP {resp.status_code} / {data.get('error') or resp.text[:300]}")
+        return None
+    print(f"[슬랙] {max_retries}회 재시도 후에도 발송 실패")
+    return None
 
 
 def send_to_slack(text: str, blocks: list = None, webhook_url: str = None, max_retries: int = 3) -> bool:

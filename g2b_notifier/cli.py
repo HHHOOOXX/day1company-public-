@@ -36,7 +36,16 @@ from .agencies import AGENCY_UNSUPPORTED, fetch_all_agency_rows, get_daily_relev
 from .alio import fetch_alio_org_names, fetch_alio_preview
 from .bizinfo import fetch_bizinfo_preview, get_daily_relevant_bizinfo
 from .classify import is_prior_proposal, set_learned_proposal_orgs, tag_business_area
-from .config import BIZINFO_SERVICE_KEY, DASHBOARD_URL, REPO_ROOT, SERVICE_KEY, SLACK_MENTION, is_kr_holiday
+from .config import (
+    BIZINFO_SERVICE_KEY,
+    DASHBOARD_URL,
+    REPO_ROOT,
+    SERVICE_KEY,
+    SLACK_BOT_TOKEN,
+    SLACK_CHANNEL_ID,
+    SLACK_MENTION,
+    is_kr_holiday,
+)
 from .g2b import (
     COLLECTION_WARNINGS,
     RAW_SOURCE_TITLES,
@@ -53,11 +62,15 @@ from .slack import (
     context_section,
     divider,
     format_star_reminder,
+    chunk_mrkdwn_blocks,
+    format_overflow_text,
     format_urgent_blocks,
     format_urgent_digest,
     mrkdwn_section,
+    post_with_bot,
     print_daily_digest,
     send_to_slack,
+    split_top,
 )
 
 
@@ -188,8 +201,9 @@ def run_daily_notification(
     # 수십 페이지를 순서대로 재시도하느라 실행 자체가 수십 분씩 걸릴 수 있다. 그러면 "정시 발송"이
     # 의미가 없어지므로, 전체 수집 단계에 상한을 두고 넘기면 남은 건 포기하고 지금까지 모은 것만 보낸다.
     # 2026-09-29: 180초 -> 240초. 세 소스를 끝까지 검사한 CI 실측이 160초로 여유가 20초뿐이었다.
-    # 더 늘리면 안 된다 — 10:01 정시 실행이 10:07 백업(schedule, --quiet-if-empty) 전에 발송을 끝내야
-    # 백업이 has_sent_today로 조용히 종료한다(늦어지면 중복 발송).
+    # 2026-10-06: 첨부를 못 본 건이 있으면 g2b._scan_in_rounds가 이 상한을 회차마다 늘려 끝까지 확인한다. 실행이
+    # 10:07 백업(schedule, --quiet-if-empty)보다 길어져도 워크플로 concurrency 그룹 때문에 백업은 정시 실행이 끝나고
+    # DB가 커밋된 뒤에 시작해 has_sent_today로 조용히 종료한다.
     # 날짜를 지정한 재조회는 정시 발송이 아니라 백업과 겹칠 일이 없으므로 시간 상한을 넉넉히 준다.
     time_limit = BACKFILL_TIME_LIMIT_SECONDS if date_range else COLLECTION_TIME_LIMIT_SECONDS
     set_collection_deadline(time_limit)
@@ -294,12 +308,17 @@ def run_daily_notification(
     # 업종제한/지역제한은 여기서 새로 확인할 필요가 없다 — get_daily_relevant_bids가 이미 공식 API로
     # 걸러서(check_induty_eligibility/check_region_eligibility) 참가 불가로 확정된 건은 review_entries에
     # 아예 들어오지 못한다(판정 보류 건만 사유와 함께 남아 있고, 이는 대시보드/카드에서 확인 가능).
-    review_top_n = 5
+    today = datetime.now().date()
+    core_top_n, review_top_n = 5, 5
+    core_entries, core_rest = split_top(core_entries, today, core_top_n)
     if not core_entries and review_entries:
         review_top_n = 10
         proposal_matches = [e for e in review_entries if is_prior_proposal(e[2])[0]]
         other_review = [e for e in review_entries if not is_prior_proposal(e[2])[0]]
-        review_entries = _priority_first(proposal_matches + other_review)[:review_top_n]
+        ordered = _priority_first(proposal_matches + other_review)
+        review_entries, review_rest = ordered[:review_top_n], split_top(ordered[review_top_n:], today, len(ordered))[0]
+    else:
+        review_entries, review_rest = split_top(review_entries, today, review_top_n)
 
     # 2026-09-22 피드백: "⚠️확인필요 N건 포함" 같은 내부 등급 문구 없이, 그냥 오늘 몇 건씩 확인했는지만
     # 담백하게 알려준다.
@@ -323,6 +342,10 @@ def run_daily_notification(
     # 한 항상 노출된다(요청: "굳이 AI 연결하지 말고 기존 필터링 결과에서 3~5개 추려서 같이 보내자").
     core_title = "\U0001F4CB 오늘의 추천 공고"
     review_title = "\U0001F50D 이런 공고도 살펴보세요"
+    # 2026-10-06 요청: 카드(상위 5~10건)에 못 넣은 공고를 버리지 않고 스레드 댓글(봇 토큰이 있을 때) 또는
+    # 본문 맨 아래 목록(웹훅만 있을 때)으로 보낸다.
+    overflow_text = format_overflow_text([(core_title, core_rest), (review_title, review_rest)], today)
+    use_bot = bool(SLACK_BOT_TOKEN and SLACK_CHANNEL_ID)
 
     # text(폴백/콘솔 미리보기). 2026-09-23 피드백: 카드 다음에 바로 "확인했어요" 요약줄이 붙어
     # 카드 내용과 뒤섞여 보였다 — blocks와 순서를 맞춰 요약은 맨 마지막으로 옮긴다.
@@ -335,6 +358,8 @@ def run_daily_notification(
         )
     if star_section:
         message_parts.append(star_section)
+    if overflow_text and not use_bot:
+        message_parts.append(overflow_text)
     if dashboard_text:
         message_parts.append(dashboard_text)
     message_parts.append(summary_text)
@@ -377,6 +402,11 @@ def run_daily_notification(
             blocks.append(divider())
         blocks.append(mrkdwn_section(star_section))
         has_section = True
+    if overflow_text and not use_bot:
+        if has_section:
+            blocks.append(divider())
+        blocks.extend(chunk_mrkdwn_blocks(overflow_text))
+        has_section = True
     if dashboard_text:
         if has_section:
             blocks.append(divider())
@@ -388,13 +418,24 @@ def run_daily_notification(
 
     print("\n----- 발송할 메시지 미리보기 -----")
     print(message)
+    if overflow_text and use_bot:
+        print("\n----- 스레드 댓글 미리보기 -----")
+        print(overflow_text)
 
     if dry_run:
         print("[dry-run] Slack 발송과 발송 기록(notified/daily_sends)을 생략합니다.")
         conn.close()
         return
 
-    sent = send_to_slack(message, blocks=blocks)
+    if use_bot:
+        ts = post_with_bot(message, blocks=blocks)
+        sent = ts is not None
+        if sent and overflow_text:
+            # 스레드 댓글은 실패해도 본문 발송은 이미 끝났으므로 발송 기록은 남긴다(목록은 대시보드에도 있음).
+            if post_with_bot(overflow_text, blocks=chunk_mrkdwn_blocks(overflow_text), thread_ts=ts) is None:
+                print("[경고] 카드에 못 넣은 공고 스레드 댓글 발송 실패 — 대시보드에서 확인 가능")
+    else:
+        sent = send_to_slack(message, blocks=blocks)
     if sent:
         db.mark_notified(conn, [pid for pid, _ in all_pairs])
         db.mark_sent_today(conn, today_str)

@@ -95,6 +95,13 @@ def set_collection_deadline(seconds: float):
     COLLECTION_DEADLINE = time.monotonic() + seconds
 
 
+def extend_collection_deadline(seconds: float):
+    """수집 시간 상한을 지금부터 최소 seconds초 뒤로 늘린다(이미 그보다 뒤면 그대로 둔다)."""
+    global COLLECTION_DEADLINE
+    if COLLECTION_DEADLINE is not None:
+        COLLECTION_DEADLINE = max(COLLECTION_DEADLINE, time.monotonic() + seconds)
+
+
 def _deadline_exceeded() -> bool:
     return COLLECTION_DEADLINE is not None and time.monotonic() > COLLECTION_DEADLINE
 
@@ -111,6 +118,11 @@ def _time_left() -> float:
 # 멈추고, 여러 공고를 동시에 받아 속도를 올린다(로컬 측정: 순차 48초 / 공고 42건).
 ATTACHMENT_SCAN_RESERVE_SECONDS = 60
 ATTACHMENT_SCAN_WORKERS = 4
+# 2026-10-06 요청: 시간 부족·다운로드 실패로 첨부를 못 본 건이 있으면, 수집 상한을 한 회차씩 늘려 가며 다시 본다.
+# 전부 확인한 뒤에 발송한다. 그래도 남는 건(계속 다운로드가 안 되는 파일 등)만 '첨부 미확인' 확인필요로 보낸다.
+# 정시 실행이 길어져도 백업 워크플로와 겹쳐 두 번 발송되지 않도록 워크플로에 concurrency 그룹을 둔다(notify.yml).
+ATTACHMENT_SCAN_ROUNDS = 3
+ATTACHMENT_RETRY_ROUND_SECONDS = 180
 # 업종/지역 공식 API 조회(공고당 2회). 실제 속도는 _throttle의 초당 요청 제한이 정한다.
 ELIGIBILITY_CHECK_WORKERS = 4
 
@@ -433,6 +445,30 @@ def _normalize_pre_spec(item: dict) -> dict:
 TASK_ORDER_FILENAME_HINTS = ["과업지시서", "과업내용서", "과업수행계획서", "과업지시"]
 
 
+def _scan_in_rounds(items: list, scan_one, label: str) -> list:
+    """items 각각에 scan_one(item)을 병렬로 돌린다. 결과가 None(시간 부족·다운로드 실패)인 건은 수집 상한을
+    ATTACHMENT_RETRY_ROUND_SECONDS만큼 늘려 최대 ATTACHMENT_SCAN_ROUNDS회차까지 다시 시도한다.
+    반환값은 items와 같은 순서의 결과 목록(끝까지 못 본 건은 None)."""
+    results = [None] * len(items)
+
+    def _one(item):
+        if _time_left() < ATTACHMENT_SCAN_RESERVE_SECONDS:
+            return None
+        return scan_one(item)
+
+    for round_no in range(1, ATTACHMENT_SCAN_ROUNDS + 1):
+        pending = [i for i, result in enumerate(results) if result is None]
+        if not pending:
+            break
+        if round_no > 1:
+            extend_collection_deadline(ATTACHMENT_RETRY_ROUND_SECONDS + ATTACHMENT_SCAN_RESERVE_SECONDS)
+            print(f"  [첨부 재시도] {label} 미확인 {len(pending)}건 — {round_no}/{ATTACHMENT_SCAN_ROUNDS}회차")
+        with ThreadPoolExecutor(max_workers=ATTACHMENT_SCAN_WORKERS) as pool:
+            for i, result in zip(pending, pool.map(_one, [items[i] for i in pending])):
+                results[i] = result
+    return results
+
+
 def _content_disposition_filename(url: str) -> str:
     """첨부파일 다운로드 URL에 요청을 보내 실제 파일명을 얻는다(stream=True로 헤더만 읽고 바로 닫아서
     본문 다운로드는 하지 않음). 사전규격 API 응답엔 파일명 필드가 아예 없어서 이 방법밖에 없다."""
@@ -466,6 +502,7 @@ def resolve_prespec_attachments(spec_urls: list):
     (4) 제외 키워드(EXCLUDE_KEYWORDS) 매칭 여부를 함께 반환한다. 네 판정이 같은 다운로드를
     재사용하도록 묶어서, 건당 최대 5번인 요청 횟수가 늘지 않게 한다.
     반환값: (best_url: str, matched_industry_codes: set, cert: "restricted"|"mention"|None, exclude_hits: list).
+    첨부 다운로드가 하나라도 실패하면 None(다시 시도할 대상).
     최종 필터를 통과한 소수 건에만 호출한다.
     2026-09-22 피드백: 사전규격 R26BD00276775(한동대학교 산학협력단) 과업지시서에 "중·소기업·
     소상공인 확인서"를 소지한 자만 참가 가능하다고 명시돼 있었는데, 이런 기업규모 제한은 API 어디에도
@@ -478,6 +515,8 @@ def resolve_prespec_attachments(spec_urls: list):
         return "", set(), False, []
 
     fetched = [(url, *_fetch_attachment(url)) for url in candidates]
+    if any(not raw for _, _, raw in fetched):
+        return None  # 다운로드 실패 — _scan_in_rounds가 다음 회차에 다시 시도한다
 
     best_url = candidates[0]
     for hint in TASK_ORDER_FILENAME_HINTS:
@@ -752,7 +791,8 @@ def check_bid_attachment_issues(item: dict):
     사례라, bidNtceNm만으로 걸러지지 않는 애매한 건은 첨부문서까지 열어 EXCLUDE_KEYWORDS를
     재확인해야 한다.
     2026-10-06: 반환값의 첫 항목이 bool에서 확인서 판정(doc_extract.certificate_requirement: "restricted"/
-    "mention"/None)으로 바뀌었다. "restricted"면 나머지는 빈 값으로 즉시 반환한다."""
+    "mention"/None)으로 바뀌었다. "restricted"면 나머지는 빈 값으로 즉시 반환한다.
+    첨부 다운로드가 하나라도 실패하면 None(다시 시도할 대상)."""
     exclude_hits = set()
     matched_codes = set()
     cert = None
@@ -762,7 +802,7 @@ def check_bid_attachment_issues(item: dict):
             continue
         filename, raw = _fetch_attachment(url)
         if not raw:
-            continue
+            return None  # 다운로드 실패 — _scan_in_rounds가 다음 회차에 다시 시도한다
         text = extract_document_text(raw, filename or item.get(f"ntceSpecFileNm{i}", ""))
         doc_cert = certificate_requirement(text)
         if doc_cert == "restricted":
@@ -828,17 +868,11 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
     # 확인서 요구나 실제 행사운영 등 EXCLUDE_KEYWORDS 도메인 내용이 적혀있는 경우가 있어
     # (bidNtceNm만으로는 알 수 없는 사례들 — resolve_prespec_attachments 주석 참고), 시간이 남는 한
     # 병렬로 확인한다. 시간이 모자라 못 본 건은 None.
-    def _scan(item):
-        if _time_left() < ATTACHMENT_SCAN_RESERVE_SECONDS:
-            return None
-        return check_bid_attachment_issues(item)
-
-    with ThreadPoolExecutor(max_workers=ATTACHMENT_SCAN_WORKERS) as pool:
-        scans = list(pool.map(_scan, [entry[0] for entry in api_passed]))
+    scans = _scan_in_rounds([entry[0] for entry in api_passed], check_bid_attachment_issues, "입찰공고 첨부")
     unscanned = sum(1 for scan in scans if scan is None)
     if unscanned:
-        print(f"  [경고] 수집 시간 부족으로 첨부 공고문 미확인 {unscanned}건 -> 확인필요로 발송")
-        COLLECTION_WARNINGS.append(f"입찰공고 첨부파일: 시간 부족으로 {unscanned}건 미확인")
+        print(f"  [경고] {ATTACHMENT_SCAN_ROUNDS}회차까지 첨부 공고문 미확인 {unscanned}건 -> 확인필요로 발송")
+        COLLECTION_WARNINGS.append(f"입찰공고 첨부파일: {ATTACHMENT_SCAN_ROUNDS}회차 재시도 후에도 {unscanned}건 미확인")
 
     eligible = []
     for (item, ind_certain, rgn_certain, matched_codes), scan in zip(api_passed, scans):
@@ -868,7 +902,7 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
             item["_reasons"].append("지역제한 조회 실패로 참가 가능 여부 판정 보류 — 직접 확인 필요")
         if scan is None:
             item["_tier"] = "review"
-            item["_reasons"].append("시간 부족으로 첨부 공고문 미확인 — 중소기업확인서 요구·제외 대상 사업인지 직접 확인 필요")
+            item["_reasons"].append("첨부 공고문을 끝내 확인하지 못함(다운로드 실패·시간 부족) — 중소기업확인서 요구·제외 대상 사업인지 직접 확인 필요")
         eligible.append(item)
 
     review_count = sum(1 for item in eligible if item.get("_tier") == "review")
@@ -927,22 +961,15 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
     # 수집이 시간 상한에 걸렸다 — 입찰공고 첨부 검사와 같은 방식으로 병렬로 미리 받아둔다.
     spec_urls_list = [item.pop("_spec_doc_urls", []) for item in relevant]
 
-    def _resolve(spec_urls):
-        if _deadline_exceeded():
-            return None
-        return resolve_prespec_attachments(spec_urls)
-
-    with ThreadPoolExecutor(max_workers=ATTACHMENT_SCAN_WORKERS) as pool:
-        resolved_list = list(pool.map(_resolve, spec_urls_list))
+    resolved_list = _scan_in_rounds(spec_urls_list, resolve_prespec_attachments, "사전규격 첨부")
 
     final = []
     for item, spec_urls, resolved in zip(relevant, spec_urls_list, resolved_list):
         if resolved is None:
-            # 전체 수집 시간 상한에 걸리면 남은 건은 첨부파일 본문 다운로드/탐색 없이
-            # 기존 동작(첫 번째 첨부파일, 업종코드 미확인, 확인서 요구 미확인)으로 대체하고 넘어간다
-            # — 정시 발송이 우선이다.
+            # 재시도 회차를 다 써도 못 본 건은 첫 번째 첨부파일 링크로 두고 확인필요로 보낸다.
             item["bidNtceDtlUrl"] = next((u for u in spec_urls if u), "")
             item["_industry_codes"] = set()
+            downgrade(item, "첨부 규격서를 끝내 확인하지 못함(다운로드 실패·시간 부족) — 중소기업확인서 요구·제외 대상 사업인지 직접 확인 필요")
             final.append(item)
             continue
         best_url, matched_codes, cert, exclude_hits = resolved
