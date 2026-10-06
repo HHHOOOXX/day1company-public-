@@ -7,14 +7,18 @@
 수집 결과는 입찰공고 필드명(bidNtceNm/ntceInsttNm/bidClseDt 등)으로 맞춰서 classify.py의 키워드/제외키워드/
 확신도/마감임박 판정과 슬랙 카드 포맷을 그대로 재사용한다.
 
-나라장터·기업마당에 이미 있는 공고 빼기(공공기관 입찰·사전규격·수의계약은 원칙적으로 나라장터에 올라간다 —
-2026-10-01 확인: NIA "[입찰공고]", IITP "[자체조달 사전규격공개]", 서울신보 재무팀 입찰공고 모두 나라장터에
-같은 공고가 있었음):
-  1) 입찰공고 전용 게시판(NIPA /home/2-3, NIA cbIdx=78336, IITP S1T12C38, 과학창의재단 boards/403)은 수집하지 않는다.
-  2) 제목이 조달 절차 공고(입찰·사전규격·수의계약 등)면 뺀다(_is_procurement_notice).
-  3) 제목이 최근 60일 나라장터·사전규격·기업마당 원본 공고명(db.raw_titles, 필터로 걸러진 것 포함) 또는
+나라장터·기업마당에 이미 있는 공고 빼기:
+  1) 제목이 최근 60일 나라장터·사전규격·기업마당 원본 공고명(db.raw_titles, 필터로 걸러진 것 포함) 또는
      DB 관심 공고와 같으면(정규화 비교) 뺀다 — 기관 게시판이 며칠 늦게 올리는 경우까지 잡는다.
-  4) 상세페이지 본문에 나라장터 공고번호(R26BK…/R26BD…)나 나라장터 링크가 있으면 뺀다.
+  2) 제목이 조달 절차 공고(입찰·사전규격·수의계약 등)면 나라장터 검색 API로 같은 공고를 찾아보고, 있을 때만 뺀다
+     (find_on_g2b). 2026-10-06 점검: NIPA·NIA·IITP 입찰공고 게시판 글은 대부분 나라장터에 있었지만, NIPA 하노이
+     사무소의 이메일 접수 입찰("한-베트남 AI·디지털 포럼 운영 대행 용역")과 NIA 홈페이지 자체 [사전규격공개]
+     ("본 사전공개는 정식 공고가 아니므로…")는 나라장터에 없었다. 같은 날 요청: "나라장터에서 실제로 찾을 수 없는
+     공고들은 빼지 말고 일단 필터로 구분해서 가져와야 한다". 그래서 입찰공고 게시판도 수집한다.
+  3) 상세페이지 본문에 나라장터 공고번호(R26BK…/R26BD…)나 나라장터 링크가 있으면 뺀다.
+채용·행사 개최·참가자 모집·공모전 같은 공지도 뺀다(_is_non_bid_notice). 단 수행기관·운영기관 모집, "기획·운영",
+"용역"처럼 우리가 사업자로 들어가는 공모(_is_vendor_call — 예: 과학창의재단 "모두의 AI 챌린지 프로그램 기획·운영
+사업", "클릭온 AI 프로그램 기획·운영 참여 기관 공모")는 절대 이 규칙으로 빼지 않는다.
 
 그 다음 키워드 필터를 통과한 건은 상세페이지 본문 규칙 검사 + 과거 나라장터·기업마당 사례 검색(RAG)으로 제외 대상을
 한 번 더 걸러낸다(rag_screen.py — 외부 API 없이 로컬 계산만 씀).
@@ -33,14 +37,19 @@ from datetime import datetime
 import requests
 import urllib3
 
+from datetime import timedelta
+from difflib import SequenceMatcher
+
 from .classify import (
     DEADLINE_GATE_DAYS,
     attach_confidence,
+    downgrade,
     is_relevant_bid,
     passes_deadline_gate,
 )
-from .config import KR_PROXY_URL
-from .g2b import COLLECTION_WARNINGS, RAW_SOURCE_TITLES, _deadline_exceeded, get_lookback_range
+from .config import KR_PROXY_URL, PRE_SPEC_BASE_URL, SERVICE_KEY
+from .g2b import COLLECTION_WARNINGS, RAW_SOURCE_TITLES, _call_api, _deadline_exceeded, get_lookback_range
+from .slack import deadline_date
 from .rag_screen import screen_items
 
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36"
@@ -121,8 +130,8 @@ def _fetch_nipa(board: str, key: str) -> list:
 
 
 def _fetch_nia(cb_idx: str, key: str) -> list:
-    """NIA 게시판(cbIdx=99835 공지사항). <li> 안에 doBbsFView('게시판','글번호',...) 링크와 'YYYY.MM.DD'
-    등록일이 있다. 입찰공고 게시판(cbIdx=78336)은 전부 나라장터 사본이라 수집하지 않는다(모듈 docstring)."""
+    """NIA 게시판(cbIdx=99835 공지사항, 78336 입찰공고). <li> 안에 doBbsFView('게시판','글번호',...) 링크와
+    'YYYY.MM.DD' 등록일이 있다."""
     page = HTTP.get(f"https://www.nia.or.kr/site/nia_kor/ex/bbs/List.do?cbIdx={cb_idx}", timeout=_TIMEOUT).text
     rows = []
     for m in re.finditer(rf"doBbsFView\('{cb_idx}','(\d+)'[^)]*\);return false;\"[^>]*>(.*?)</a>", page, re.S):
@@ -284,8 +293,11 @@ def _fetch_kised(pages: int = 3) -> list:
 # (표시명, 파서). 표시명은 로그/경고 메시지용.
 AGENCY_SOURCES = [
     ("NIPA 사업공고", lambda: _fetch_nipa("2-2", "nipa_biz")),
+    ("NIPA 입찰공고", lambda: _fetch_nipa("2-3", "nipa_bid")),
     ("NIA 공지사항", lambda: _fetch_nia("99835", "nia_notice")),
+    ("NIA 입찰공고", lambda: _fetch_nia("78336", "nia_bid")),
     ("IITP 공지사항", lambda: _fetch_iitp("37", "7", "iitp_notice")),
+    ("IITP 입찰공고", lambda: _fetch_iitp("38", "8", "iitp_bid")),
     ("과학창의재단 사업공고", _fetch_kosac_biz),
     ("소진공 공지사항", _fetch_semas_notice),
     ("소진공 사업공고", _fetch_semas_biz),
@@ -346,6 +358,90 @@ _PROCUREMENT_RE = re.compile(r"입찰|사전규격|조달|수의계약|견적|�
 
 def _is_procurement_notice(item: dict) -> bool:
     return bool(_PROCUREMENT_RE.search(item["bidNtceNm"]))
+
+
+# 제목 앞뒤의 머리말을 걷어내 나라장터 검색어로 쓴다: "[조달청 입찰공고] OO", "[제2026재무팀-66호]입찰공고(OO)",
+# "(재공고) OO", "OO (긴급공고)".
+_LEAD_TAG_RE = re.compile(r"^\s*(\[[^\]]*\]|【[^】]*】|\((?:재공고|긴급|긴급공고|수정|정정)[^)]*\))\s*")
+_WRAPPED_RE = re.compile(r"^(?:입찰|입찰재|재입찰|전자공개\s*수의계약|수의계약)?\s*(?:재)?공고\s*\((.+)\)\s*$")
+_TRAIL_TAG_RE = re.compile(r"\s*\((?:재공고|긴급|긴급공고|수정|정정)[^)]*\)\s*$")
+# 나라장터 PPSSrch 조회 기간 상한(약 한 달)을 넘지 않게 잡는다. 기관 게시판은 나라장터보다 며칠 늦거나 이르게 올린다.
+_G2B_LOOKUP_BEFORE_DAYS = 20
+_G2B_LOOKUP_AFTER_DAYS = 8
+_G2B_LOOKUP_OPS = [
+    ("getBidPblancListInfoServcPPSSrch", None, "bidNtceNm", "bidNtceNo", "bidNtceNm"),
+    ("getBidPblancListInfoThngPPSSrch", None, "bidNtceNm", "bidNtceNo", "bidNtceNm"),
+    ("getBidPblancListInfoCnstwkPPSSrch", None, "bidNtceNm", "bidNtceNo", "bidNtceNm"),
+    ("getPublicPrcureThngInfoServcPPSSrch", PRE_SPEC_BASE_URL, "prdctClsfcNoNm", "bfSpecRgstNo", "prdctClsfcNoNm"),
+]
+
+
+def _g2b_search_title(title: str) -> str:
+    t = _text(title)
+    while True:
+        stripped = _LEAD_TAG_RE.sub("", t)
+        if stripped == t:
+            break
+        t = stripped
+    wrapped = _WRAPPED_RE.match(t)
+    if wrapped:
+        t = wrapped.group(1)
+    return _TRAIL_TAG_RE.sub("", t).strip()
+
+
+def find_on_g2b(item: dict):
+    """기관 게시판 글과 같은 공고를 나라장터(입찰 용역·물품·공사, 사전규격 용역)에서 제목으로 찾는다.
+    찾으면 나라장터 공고번호, 못 찾으면 "", 검색 API가 응답하지 않아 판단할 수 없으면 None."""
+    query = _g2b_search_title(item["bidNtceNm"])
+    if len(query) < 4:
+        return ""
+    posted = _posted_date(item) or datetime.now().date()
+    begin = posted - timedelta(days=_G2B_LOOKUP_BEFORE_DAYS)
+    end = min(posted + timedelta(days=_G2B_LOOKUP_AFTER_DAYS), datetime.now().date())
+    target = normalize_title(query)
+    words = query.split()
+    queries = [query[:40]] + ([" ".join(words[:3])] if len(words) > 3 else [])
+    answered = False
+    for q in queries:
+        for op, base, param, no_field, name_field in _G2B_LOOKUP_OPS:
+            params = {
+                "ServiceKey": SERVICE_KEY, "type": "json", "inqryDiv": "1",
+                "inqryBgnDt": begin.strftime("%Y%m%d0000"), "inqryEndDt": end.strftime("%Y%m%d2359"),
+                "pageNo": "1", "numOfRows": "50", param: q,
+            }
+            result = _call_api(op, params, max_retries=2, **({"base_url": base} if base else {}))
+            if result is None:
+                continue
+            answered = True
+            for found in result.get("items") or []:
+                name = normalize_title(_g2b_search_title(found.get(name_field, "")))
+                if name == target or SequenceMatcher(None, target, name).ratio() >= 0.85:
+                    return found.get(no_field) or "?"
+    return "" if answered else None
+
+
+# 우리가 사업자(수행·운영기관)로 들어가는 공모라는 신호. 이 신호가 있으면 비입찰 공지 규칙으로 빼지 않고,
+# 마감 7일 미만이어도 확인필요로 보낸다(2026-10-06 요청 — 과학창의재단 공모는 접수기간이 1주 남짓인 경우가 많다:
+# "KASA 찾아가는 우주항공 교육·문화 사업 운영기관 재공모" 9/4 게시 → 9/10 마감).
+_VENDOR_CALL_RE = re.compile(
+    r"수행\s*기관|운영\s*기관|위탁\s*기관|공급\s*기관|전문\s*기관|참여\s*기관|주관\s*기관|사업자\s*(?:모집|선정|공모)"
+    r"|기획\s*[·ㆍ,]?\s*운영|운영\s*(?:대행|사업|위탁)|용역|위탁"
+)
+# 입찰·공모가 아닌 기관 공지(2026-10-06 점검에서 잘못 통과한 글: IITP "(재)경산이노베이션아카데미 학장 초빙 공고",
+# 중진공 "재창업 특화교육·컨설팅 참가자 모집", NIA "AI 인프라 넥서스 콘퍼런스(AINEX 2026) 개최",
+# NIA "2026 데이터+AI 혁신 챌린지 통합 공고 안내").
+_NON_BID_RE = re.compile(
+    r"초빙|채용|임용|직원\s*모집|비상임|개최|설명회|참가자\s*모집|교육생\s*모집|수강생\s*모집|참가\s*신청"
+    r"|(?:참여|수요|입주|참가)\s*기업\s*모집|공모전|챌린지|경진대회|해커톤"
+)
+
+
+def _is_vendor_call(item: dict) -> bool:
+    return bool(_VENDOR_CALL_RE.search(item["bidNtceNm"]))
+
+
+def _is_non_bid_notice(item: dict) -> bool:
+    return not _is_vendor_call(item) and bool(_NON_BID_RE.search(item["bidNtceNm"]))
 
 
 # 상세페이지 본문에서 나라장터 공고라는 걸 확정할 수 있는 흔적: 입찰공고/사전규격 번호(R26BK01742481,
@@ -414,16 +510,16 @@ def get_daily_relevant_agency_notices(
 
     print(f"[요청] 기관 게시판 {len(AGENCY_SOURCES)}곳 / {start_date.isoformat()} ~ {end_date.isoformat()} 등록분")
     in_range, seen = [], set()
-    skipped = {"나라장터 조달공고": 0, "결과공지": 0, "나라장터·기업마당 중복": 0}
+    skipped = {"결과공지": 0, "채용·행사 등 비입찰 공지": 0, "나라장터·기업마당 중복": 0, "나라장터 조달공고": 0}
     for name, rows in fetch_all_agency_rows().items():
         picked = [r for r in rows if (d := _posted_date(r)) and start_date <= d <= end_date]
         print(f"  - {name}: 목록 {len(rows)}건 중 기간 내 {len(picked)}건")
         for item in picked:
-            if _is_procurement_notice(item):
-                skipped["나라장터 조달공고"] += 1
-                continue
             if _is_result_notice(item):
                 skipped["결과공지"] += 1
+                continue
+            if _is_non_bid_notice(item):
+                skipped["채용·행사 등 비입찰 공지"] += 1
                 continue
             norm = normalize_title(item["bidNtceNm"])
             if norm in known or norm in seen:
@@ -431,6 +527,20 @@ def get_daily_relevant_agency_notices(
                 continue
             seen.add(norm)
             in_range.append(item)
+
+    # 조달 절차 제목(입찰·사전규격 등)은 나라장터에서 실제로 찾아질 때만 뺀다(모듈 docstring 2).
+    procurement = [item for item in in_range if _is_procurement_notice(item)]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        lookups = list(pool.map(find_on_g2b, procurement))
+    for item, found in zip(procurement, lookups):
+        if found:
+            print(f"  [나라장터 공고] {item['bidNtceNm'][:50]} — 나라장터 {found} -> 제외")
+            skipped["나라장터 조달공고"] += 1
+            in_range.remove(item)
+        elif found is None:
+            item["_g2b_lookup_failed"] = True
+        else:
+            print(f"  [나라장터에 없음] {item['bidNtceNm'][:50]} — 일반 필터로 판단")
 
     relevant = [item for item in in_range if is_relevant_bid(item, alio_orgs)]
     skipped_text = "·".join(f"{k} {v}건" for k, v in skipped.items())
@@ -451,11 +561,29 @@ def get_daily_relevant_agency_notices(
     relevant = not_on_g2b
 
     attach_confidence(relevant, alio_orgs)
+    for item in relevant:
+        if item.pop("_g2b_lookup_failed", False):
+            downgrade(item, "나라장터 검색 API가 응답하지 않아 나라장터 중복 여부를 확인하지 못함 — 직접 확인 필요")
     relevant = screen_items(relevant, detail_texts, rag_postings or [], rag_raw_titles)
+    # 2026-10-06 요청: 수행기관·운영기관을 뽑는 기관 자체 공모(나라장터에 안 올라옴)는 무조건 챙겨야 하는 유형이라
+    # (실사례: 과학창의재단 "모두의 AI 챌린지 프로그램 기획·운영 사업" — 실제 제안 참여) 우선검토로 카드 앞쪽에 둔다.
+    for item in relevant:
+        if _is_vendor_call(item):
+            downgrade(item, "기관 홈페이지에만 올라온 수행기관·운영기관 공모(나라장터 미게시) — 우선 확인 필요", priority=True)
 
     today = datetime.now().date()
     before_gate = len(relevant)
-    relevant = [item for item in relevant if passes_deadline_gate(item, today)]
-    print(f"[마감임박필터링] {before_gate}건 → {len(relevant)}건 (마감 {DEADLINE_GATE_DAYS}일 미만 비확실후보 제외)")
+    gated = []
+    for item in relevant:
+        if passes_deadline_gate(item, today):
+            gated.append(item)
+            continue
+        d = deadline_date(item)
+        # 2026-10-06 요청: 우리가 수행기관으로 들어가는 기관 공모는 접수기간이 짧아도 놓치면 안 된다.
+        if _is_vendor_call(item) and d is not None and d >= today:
+            downgrade(item, f"마감까지 {(d - today).days}일 — 7일 미만이지만 기관 공모라 놓치지 않게 포함")
+            gated.append(item)
+    relevant = gated
+    print(f"[마감임박필터링] {before_gate}건 → {len(relevant)}건 (마감 {DEADLINE_GATE_DAYS}일 미만 비확실후보 제외, 기관 공모는 유지)")
     relevant.sort(key=lambda item: item.get("bidNtceDt", ""))
     return relevant
