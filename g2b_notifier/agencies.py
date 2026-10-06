@@ -16,7 +16,8 @@
      ("본 사전공개는 정식 공고가 아니므로…")는 나라장터에 없었다. 같은 날 요청: "나라장터에서 실제로 찾을 수 없는
      공고들은 빼지 말고 일단 필터로 구분해서 가져와야 한다". 그래서 입찰공고 게시판도 수집한다.
   3) 상세페이지 본문에 나라장터 공고번호(R26BK…/R26BD…)나 나라장터 링크가 있으면 뺀다.
-채용·행사 개최·참가자 모집·공모전 같은 공지도 뺀다(_is_non_bid_notice). 단 수행기관·운영기관 모집, "기획·운영",
+채용·행사 개최·참가자 모집·공모전 같은 공지도 뺀다(_is_non_bid_notice). 단 제목에 교육·콘텐츠 신호가 강하면
+(classify.has_strong_fit) 빼지 않고 확인필요로 낮춘다(2026-10-06 요청). 수행기관·운영기관 모집, "기획·운영",
 "용역"처럼 우리가 사업자로 들어가는 공모(_is_vendor_call — 예: 과학창의재단 "모두의 AI 챌린지 프로그램 기획·운영
 사업", "클릭온 AI 프로그램 기획·운영 참여 기관 공모")는 절대 이 규칙으로 빼지 않는다.
 
@@ -44,6 +45,7 @@ from .classify import (
     DEADLINE_GATE_DAYS,
     attach_confidence,
     downgrade,
+    has_strong_fit,
     is_relevant_bid,
     passes_deadline_gate,
 )
@@ -519,8 +521,10 @@ def get_daily_relevant_agency_notices(
                 skipped["결과공지"] += 1
                 continue
             if _is_non_bid_notice(item):
-                skipped["채용·행사 등 비입찰 공지"] += 1
-                continue
+                if not has_strong_fit(item["bidNtceNm"]):
+                    skipped["채용·행사 등 비입찰 공지"] += 1
+                    continue
+                item["_non_bid_doubt"] = True
             norm = normalize_title(item["bidNtceNm"])
             if norm in known or norm in seen:
                 skipped["나라장터·기업마당 중복"] += 1
@@ -562,6 +566,8 @@ def get_daily_relevant_agency_notices(
 
     attach_confidence(relevant, alio_orgs)
     for item in relevant:
+        if item.pop("_non_bid_doubt", False):
+            downgrade(item, "제목이 채용·행사·참가자 모집 공지로 보이지만 교육·콘텐츠 신호가 강해 남김 — 우리가 수행할 공모인지 확인 필요")
         if item.pop("_g2b_lookup_failed", False):
             downgrade(item, "나라장터 검색 API가 응답하지 않아 나라장터 중복 여부를 확인하지 못함 — 직접 확인 필요")
     relevant = screen_items(relevant, detail_texts, rag_postings or [], rag_raw_titles)
