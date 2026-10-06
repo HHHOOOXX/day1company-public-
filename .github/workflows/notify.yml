@@ -7,7 +7,7 @@ on:
   # 있는 best-effort라, 여기서는 그게 어떤 이유로든 안 됐을 때 대신 보내는 2차 백업 역할만 한다.
   schedule:
     # 10:07 KST = 01:07 UTC, 평일(월~금)만 실행
-    # 월요일 실행분은 스크립트 로직상 직전 금요일 하루치만 확인함(주말엔 공고가 올라오지 않으므로 토/일 조회 불필요)
+    # 조회 기간은 직전 발송일(평일·비공휴일)부터 어제까지 — 월요일은 금~일, 연휴 다음 날은 연휴 전 발송일부터(g2b.get_lookback_range)
     # 참고: 정각(:00)은 전세계적으로 스케줄이 몰려 GitHub Actions가 지연시키는 경우가 있어 :07로 분산
     - cron: "7 1 * * 1-5"
   workflow_dispatch:
@@ -16,6 +16,14 @@ on:
         description: "Slack 발송·DB 커밋 없이 수집/필터링만 실행(동작 확인용)"
         type: boolean
         default: false
+      from_date:
+        description: "놓친 날짜 재조회: 게시일 시작(YYYY-MM-DD). 비우면 기본 기간(직전 발송일~어제)"
+        type: string
+        default: ""
+      to_date:
+        description: "놓친 날짜 재조회: 게시일 끝(YYYY-MM-DD). 비우면 시작일 하루"
+        type: string
+        default: ""
 
 permissions:
   contents: write  # data/notifier.db 변경사항을 워크플로우가 직접 커밋하기 위해 필요
@@ -46,16 +54,24 @@ jobs:
           # 대시보드(AX사업기획실 공고목록) 호스팅 방식이 정해지면 그 URL을 시크릿으로 추가하면
           # 슬랙 메시지 마지막에 링크가 자동으로 붙는다. 비어있으면 링크 블록 자체가 생략된다.
           DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+          # 입력값을 셸 스크립트에 직접 끼워 넣지 않고 환경변수로 넘긴다(스크립트 인젝션 방지).
+          FROM_DATE: ${{ inputs.from_date }}
+          TO_DATE: ${{ inputs.to_date }}
         # 외부 크론이 부르는 workflow_dispatch는 항상 전체 메시지를 보낸다(진짜 정시 발송).
         # 내부 schedule은 백업이라, 외부 크론이 이미 정상적으로 보냈으면(오늘자 공고가 전부
         # notified 처리돼 있으면) --quiet-if-empty 덕분에 조용히 넘어가고, 안 됐을 때만 대신 보낸다.
         run: |
+          RANGE=()
+          if [ -n "$FROM_DATE" ]; then
+            RANGE=(--from "$FROM_DATE")
+            [ -n "$TO_DATE" ] && RANGE+=(--to "$TO_DATE")
+          fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            python test_g2b_api.py notify 용역 --dry-run
+            python test_g2b_api.py notify 용역 --dry-run "${RANGE[@]}"
           elif [ "${{ github.event_name }}" = "schedule" ]; then
             python test_g2b_api.py notify 용역 --quiet-if-empty
           else
-            python test_g2b_api.py notify 용역
+            python test_g2b_api.py notify 용역 "${RANGE[@]}"
           fi
 
       # data/notifier.db(중복 발송 방지용 상태) + docs/index.html(대시보드)를 repo에 커밋해서

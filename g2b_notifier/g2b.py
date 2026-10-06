@@ -16,6 +16,9 @@ from .classify import (
     attach_confidence,
     build_learned_keywords,
     dedupe_latest,
+    downgrade,
+    downgrade_for_doc_exclude,
+    has_strong_fit,
     is_relevant_bid,
     is_relevant_prespec,
     passes_deadline_gate,
@@ -30,12 +33,13 @@ from .config import (
     PRE_SPEC_BASE_URL,
     PRE_SPEC_LIST_OPERATION,
     SERVICE_KEY,
+    is_kr_holiday,
 )
 from .doc_extract import (
+    certificate_requirement,
     extract_document_text,
     find_industry_codes,
     matches_exclude_keyword,
-    requires_ineligible_certificate,
 )
 
 LICENSE_LIMIT_OPERATION = "getBidPblancListInfoLicenseLimit"
@@ -322,18 +326,29 @@ def fetch_all_bids(category: str = "용역", days: int = 30, page_size: int = 10
     )
 
 
+def _is_run_day(d) -> bool:
+    """정기 발송이 도는 날(평일이면서 공휴일이 아닌 날). cli.run_daily_notification의 공휴일 건너뛰기와 같은 기준."""
+    return d.weekday() < 5 and not is_kr_holiday(d)[0]
+
+
 def get_lookback_range(today=None):
-    """오늘 요일에 따라 확인할 날짜 범위(시작일, 종료일)를 정한다.
-    주말에는 공고가 올라오지 않으므로, 월요일은 직전 금요일 하루만, 그 외 요일은 어제 하루만 확인한다."""
+    """오늘 실행이 확인할 게시일 범위(시작일, 종료일, 둘 다 포함)를 정한다.
+    직전 발송일(평일이면서 공휴일이 아닌 날)이 그 전날까지를 확인했으므로, 직전 발송일부터 어제까지를 본다.
+      - 화~금: 어제 하루
+      - 월요일: 금~일
+      - 연휴 다음 날: 연휴 전 마지막 발송일부터 어제까지 (예: 2026-10-06(화)은 10/2(금)~10/5(월, 대체공휴일))
+    2026-10-06: 예전엔 "월요일은 금요일, 그 외엔 어제"로 고정이라 공휴일에 발송을 건너뛴 날의 앞날 게시분이
+    통째로 빠졌다 — 10/5 대체공휴일 다음 날 10/6 실행이 10/5만 보는 바람에 10/2(금) 게시분 약 500건을 놓쳤다."""
     if today is None:
         today = datetime.now().date()
 
-    if today.weekday() == 0:  # 0 = 월요일
-        start_date = today - timedelta(days=3)  # 금요일 (토/일은 공고가 없어 건너뜀)
-    else:
-        start_date = today - timedelta(days=1)  # 어제
-
-    end_date = start_date
+    end_date = today - timedelta(days=1)
+    start_date = end_date
+    # 공휴일 목록이 비어 있는 연도에 무한히 거슬러 올라가지 않도록 2주로 제한한다.
+    for _ in range(14):
+        if _is_run_day(start_date):
+            break
+        start_date -= timedelta(days=1)
     return start_date, end_date
 
 
@@ -450,7 +465,7 @@ def resolve_prespec_attachments(spec_urls: list):
     (2) 문서 본문에서 찾은 우리 보유 업종코드 교집합, (3) 소상공인/중소기업 확인서 요구 여부,
     (4) 제외 키워드(EXCLUDE_KEYWORDS) 매칭 여부를 함께 반환한다. 네 판정이 같은 다운로드를
     재사용하도록 묶어서, 건당 최대 5번인 요청 횟수가 늘지 않게 한다.
-    반환값: (best_url: str, matched_industry_codes: set, restricted: bool, exclude_hits: list).
+    반환값: (best_url: str, matched_industry_codes: set, cert: "restricted"|"mention"|None, exclude_hits: list).
     최종 필터를 통과한 소수 건에만 호출한다.
     2026-09-22 피드백: 사전규격 R26BD00276775(한동대학교 산학협력단) 과업지시서에 "중·소기업·
     소상공인 확인서"를 소지한 자만 참가 가능하다고 명시돼 있었는데, 이런 기업규모 제한은 API 어디에도
@@ -475,18 +490,19 @@ def resolve_prespec_attachments(spec_urls: list):
         break
 
     matched_codes = set()
-    restricted = False
+    cert = None
     exclude_hits = set()
     for _, filename, raw in fetched:
         if not raw:
             continue
         text = extract_document_text(raw, filename)
         matched_codes |= find_industry_codes(text)
-        if requires_ineligible_certificate(text):
-            restricted = True
+        doc_cert = certificate_requirement(text)
+        if doc_cert == "restricted" or cert is None:
+            cert = doc_cert or cert
         exclude_hits.update(matches_exclude_keyword(text))
 
-    return best_url, matched_codes & COMPANY_INDUSTRY_CODES, restricted, sorted(exclude_hits)
+    return best_url, matched_codes & COMPANY_INDUSTRY_CODES, cert, sorted(exclude_hits)
 
 
 def fetch_pre_specs_for_date_range(start_date=None, end_date=None, page_size: int = 100, max_pages: int = 20):
@@ -633,13 +649,14 @@ def check_induty_eligibility(item: dict):
         # 제한경쟁이지만 업종코드 자체가 기재되지 않은 경우 -> 포함
         return True, True, set()
 
-    groups = {}
+    groups, names = {}, {}
     for row in limits:
         grp = row.get("lmtGrpNo", "0")
         groups.setdefault(grp, set()).add(_induty_code(row.get("lcnsLmtNm", "")))
+        names.setdefault(grp, []).append(row.get("lcnsLmtNm", ""))
 
     matched_codes = set()
-    for codes in groups.values():
+    for grp, codes in groups.items():
         codes.discard("")
         if not codes:
             continue  # 이 그룹은 업종코드 미기재 -> 통과로 간주
@@ -648,6 +665,10 @@ def check_induty_eligibility(item: dict):
             excluded_hit = codes & EXCLUDE_INDUSTRY_CODES
             if excluded_hit:
                 print(f"  [업종제외] {excluded_hit} 코드가 제한 그룹에 있고 보유 업종과 안 겹침 -> 배제")
+            else:
+                # 호출부가 교육·콘텐츠 신호가 강한 공고를 확인필요로 살릴 때 쓴다(2026-10-06). 무관 업종으로
+                # 짚어준 EXCLUDE_INDUSTRY_CODES(행사대행업 9901 등)가 걸린 그룹은 살리지 않는다.
+                item["_missing_induty"] = names[grp]
             return False, True, set()  # 이 그룹을 보유 업종으로 채울 수 없음 -> 참가 불가 확정
         matched_codes |= overlap
 
@@ -729,9 +750,12 @@ def check_bid_attachment_issues(item: dict):
     있었는데, 목록 API 어디에도 이를 알려주는 필드가 없었음) 첨부문서를 직접 열어봐야만 판정 가능하다.
     같은 날 R26BD00276858은 API의 title 필드만으로는 실제 내용(행사운영 용역)을 알 수 없었던
     사례라, bidNtceNm만으로 걸러지지 않는 애매한 건은 첨부문서까지 열어 EXCLUDE_KEYWORDS를
-    재확인해야 한다."""
+    재확인해야 한다.
+    2026-10-06: 반환값의 첫 항목이 bool에서 확인서 판정(doc_extract.certificate_requirement: "restricted"/
+    "mention"/None)으로 바뀌었다. "restricted"면 나머지는 빈 값으로 즉시 반환한다."""
     exclude_hits = set()
     matched_codes = set()
+    cert = None
     for i in range(1, 11):
         url = item.get(f"ntceSpecDocUrl{i}", "")
         if not url:
@@ -740,15 +764,17 @@ def check_bid_attachment_issues(item: dict):
         if not raw:
             continue
         text = extract_document_text(raw, filename or item.get(f"ntceSpecFileNm{i}", ""))
-        if requires_ineligible_certificate(text):
-            return True, [], set()
+        doc_cert = certificate_requirement(text)
+        if doc_cert == "restricted":
+            return "restricted", [], set()
+        cert = cert or doc_cert
         exclude_hits.update(matches_exclude_keyword(text))
         matched_codes.update(find_industry_codes(text))
-    return False, sorted(exclude_hits), matched_codes & COMPANY_INDUSTRY_CODES
+    return cert, sorted(exclude_hits), matched_codes & COMPANY_INDUSTRY_CODES
 
 
 def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=None, alio_orgs=None):
-    """지정 기간(기본값: get_lookback_range() — 월요일은 직전 금요일 하루, 그 외엔 어제 하루) 동안 게시된 공고 중,
+    """지정 기간(기본값: get_lookback_range() — 직전 발송일부터 어제까지) 동안 게시된 공고 중,
     중복 제거 + 우리팀 관심 조건(키워드∩발주기관) + 수의계약/수의시담 제외 + 업종제한(보유 업종코드) +
     지역제한(서울) 조건을 만족하는 공고를 반환한다. 애매하게 판정된 건('review' 등급)도 제외하지 않고
     ⚠️ 태그를 달아 같이 포함시킨다 — 업종/지역 필터가 엄격해질수록 애매한 진짜 기회를 조용히 놓칠 위험이
@@ -782,7 +808,14 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
     def _check_eligibility(item):
         ind_ok, ind_certain, matched_codes = check_induty_eligibility(item)
         if not ind_ok:
-            return None
+            # 2026-10-06 요청: 교육·콘텐츠 신호가 강한 공고는 업종을 안 갖고 있어도 버리지 않고 확인필요로 보낸다
+            # (공동수급·업종 추가 등록으로 참여할 수 있다). 실사례: R26BK01751861 "공공부문 인공지능 신뢰기반 제도
+            # 교육 및 홍보 콘텐츠 제작" — 비디오물제작업/3244 제한.
+            if not item.get("_missing_induty") or not has_strong_fit(item.get("bidNtceNm", "")):
+                return None
+            missing = ", ".join(item["_missing_induty"])
+            downgrade(item, f"업종제한({missing}) 미보유 — 공동수급·업종 등록으로 참여 가능한지 확인 필요")
+            print(f"  [확인필요] {item.get('bidNtceNo', '')} 업종 미보유({missing})지만 교육·콘텐츠 신호가 강해 남김")
         rgn_ok, rgn_certain = check_region_eligibility(item)
         if not rgn_ok:
             return None
@@ -811,13 +844,16 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
     for (item, ind_certain, rgn_certain, matched_codes), scan in zip(api_passed, scans):
         doc_matched_codes = set()
         if scan is not None:
-            restricted, exclude_hits, doc_matched_codes = scan
-            if restricted:
-                print(f"  [제외] {item.get('bidNtceNo', '')} 소상공인/중소기업 확인서 요구 확인 -> 배제")
+            cert, exclude_hits, doc_matched_codes = scan
+            if cert == "restricted":
+                print(f"  [제외] {item.get('bidNtceNo', '')} 소상공인/중소기업 확인서 소지를 참가자격으로 요구 -> 배제")
                 continue
+            if cert == "mention":
+                downgrade(item, "첨부문서에 소상공인·중소기업 확인서가 언급됨(참가자격 제한인지 불확실) — 직접 확인 필요")
             if exclude_hits:
-                print(f"  [제외] {item.get('bidNtceNo', '')} 첨부문서 본문에서 제외 키워드 {exclude_hits} 확인 -> 배제")
-                continue
+                # 2026-10-06 요청: 첨부 검사에서 걸린 건은 버리지 않고 확인필요로 낮춘다.
+                print(f"  [확인필요] {item.get('bidNtceNo', '')} 첨부문서 본문에서 제외 키워드 {exclude_hits} 확인")
+                downgrade_for_doc_exclude(item, exclude_hits, "첨부문서")
         # 2026-09-18 추가: 업종제한사항에서 실제로 우리 보유 코드가 확인된 공고는 대시보드
         # '업종코드 확인' 열에도 사전규격과 동일하게 표시한다. API 기반 판정(matched_codes)과
         # 첨부문서 본문 스캔 결과(doc_matched_codes)를 합쳐서 보여준다 — 업종제한 하드 제외 여부는
@@ -909,26 +945,30 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
             item["_industry_codes"] = set()
             final.append(item)
             continue
-        best_url, matched_codes, restricted, exclude_hits = resolved
-        if restricted:
+        best_url, matched_codes, cert, exclude_hits = resolved
+        if cert == "restricted":
             # 2026-09-22 피드백: 과업지시서/제안요청서에 "중·소기업·소상공인 확인서" 등 우리가
             # 발급받을 수 없는 확인서를 참가자격으로 요구하면, 키워드/업종코드가 아무리 잘 맞아도
             # 애초에 참가 자체가 불가능하므로 완전히 제외한다(실사례: R26BD00276775).
-            print(f"  [제외] {item.get('bidNtceNo', '')} 소상공인/중소기업 확인서 요구 확인 -> 배제")
-            continue
-        if exclude_hits:
-            # 2026-09-22 피드백: API의 title 필드(품명 분류값)만으로는 실제 사업 내용을 알 수 없는
-            # 건이 있어(실사례: R26BD00276858 — 실제로는 "KU Global Tech Career Fair 운영 용역",
-            # 행사 기획·설치·홍보 대행), 첨부문서 본문에서도 EXCLUDE_KEYWORDS를 재확인한다.
-            print(f"  [제외] {item.get('bidNtceNo', '')} 첨부문서 본문에서 제외 키워드 {exclude_hits} 확인 -> 배제")
+            print(f"  [제외] {item.get('bidNtceNo', '')} 소상공인/중소기업 확인서 소지를 참가자격으로 요구 -> 배제")
             continue
         item["bidNtceDtlUrl"] = best_url
         item["_industry_codes"] = matched_codes
-        if matched_codes:
+        # 2026-09-22 피드백: API의 title 필드(품명 분류값)만으로는 실제 사업 내용을 알 수 없는 건이 있어
+        # (실사례: R26BD00276858 — 실제로는 "KU Global Tech Career Fair 운영 용역") 첨부문서 본문에서도
+        # 제외 키워드를 재확인한다. 2026-10-06 요청: 걸려도 버리지 않고 확인필요로 낮춘다.
+        # 제목 제외 키워드로 우선검토가 된 건(attach_confidence)은 업종코드가 맞아도 확실포함으로 올리지 않는다.
+        doubts = cert == "mention" or exclude_hits or item.get("_priority_review")
+        if matched_codes and not doubts:
             # 2026-09-18 피드백: 제안요청서 원문에서 우리 보유 업종코드가 실제로 확인되면(예:
             # "이러닝콘텐츠업 (업종코드: 6527)") 키워드 매칭보다 훨씬 강한 신호이므로 확실로 격상한다.
             item["_tier"] = "include"
             item["_reasons"] = []
+        if cert == "mention":
+            downgrade(item, "첨부문서에 소상공인·중소기업 확인서가 언급됨(참가자격 제한인지 불확실) — 직접 확인 필요")
+        if exclude_hits:
+            print(f"  [확인필요] {item.get('bidNtceNo', '')} 첨부문서 본문에서 제외 키워드 {exclude_hits} 확인")
+            downgrade_for_doc_exclude(item, exclude_hits, "첨부문서")
         final.append(item)
 
     # 2026-09-22 피드백: 마감임박 게이트(passes_deadline_gate)는 여기 적용하지 않는다. 사전규격의

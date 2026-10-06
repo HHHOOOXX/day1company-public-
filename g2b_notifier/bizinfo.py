@@ -20,12 +20,13 @@ from .classify import (
     _matches_any,
     attach_confidence,
     dedupe_latest,
+    downgrade,
+    downgrade_for_doc_exclude,
     is_relevant_bid,
     passes_deadline_gate,
 )
 from .config import BIZINFO_API_URL, BIZINFO_SERVICE_KEY, NATIONWIDE_OVERRIDE_KEYWORDS, NON_METRO_REGION_ORGS
-from .doc_extract import extract_document_text, matches_exclude_keyword
-from .doc_extract import requires_ineligible_certificate as _doc_requires_ineligible_certificate
+from .doc_extract import certificate_requirement, extract_document_text, matches_exclude_keyword
 from .g2b import COLLECTION_WARNINGS, RAW_SOURCE_TITLES, get_lookback_range, get_with_retry
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -168,14 +169,14 @@ def is_region_restricted_by_attachment(texts: list) -> bool:
 # 실제 사례로 검증: PBLN_000000000126566 — 제출서류에 "소상공인확인서" 명시(소상공인으로 명시된
 # 업체만 인정). 판정 로직 자체는 doc_extract.requires_ineligible_certificate 공용 함수로 옮겨서
 # 나라장터 사전규격/입찰공고 쪽(g2b.py)에서도 같이 쓴다(2026-09-22, R26BD00276775 사례로 확인).
-def requires_ineligible_certificate(texts: list) -> bool:
-    """첨부 공고문에 우리가 발급받을 수 없는 확인서(소상공인확인서/중소기업확인서)가 제출서류로
-    명시돼 있으면 배제 대상으로 판정한다."""
-    for text in texts:
-        if _doc_requires_ineligible_certificate(text):
-            print("  [제외] 첨부파일 제출서류에 소상공인/중소기업 확인서 요구 확인 -> 배제")
-            return True
-    return False
+def certificate_requirement_in(texts: list):
+    """첨부 공고문들의 확인서 판정(doc_extract.certificate_requirement)을 합친다 — "restricted"가 하나라도 있으면
+    "restricted", 아니면 "mention"이 있으면 "mention", 둘 다 없으면 None."""
+    results = {certificate_requirement(text) for text in texts}
+    if "restricted" in results:
+        print("  [제외] 첨부파일에 소상공인/중소기업 확인서 소지 요구 확인 -> 배제")
+        return "restricted"
+    return "mention" if "mention" in results else None
 
 
 def _creat_date(raw_item: dict):
@@ -270,24 +271,25 @@ def get_daily_relevant_bizinfo(start_date=None, end_date=None, alio_orgs=None):
     # 사업개요엔 없어도 첨부 공고문 안에만 있는 조건이 실제로 있어(지역제한 실사례: PBLN_000000000126590,
     # 제출서류 실사례: PBLN_000000000126566 — 소상공인확인서 요구), 이미 좁혀진 소수 건에 한해
     # 첨부파일을 직접 열어 지역제한 + 제출서류(소상공인/중소기업확인서)를 같이 확인한다.
-    still_relevant = []
+    still_relevant, doubts = [], []
     for item in relevant:
         texts = fetch_attachment_texts(item)
         if is_region_restricted_by_attachment(texts):
             continue
-        if requires_ineligible_certificate(texts):
+        cert = certificate_requirement_in(texts)
+        if cert == "restricted":
             continue
         # 2026-09-22 피드백: 공고명(pblancNm)만으로는 실제 사업 내용을 알 수 없는 경우가 있어
         # (나라장터 사전규격 R26BD00276858 사례 — API 제목 필드만 봐서는 행사운영 용역인 걸 몰랐음)
-        # 이미 열어본 첨부 공고문 본문에서도 EXCLUDE_KEYWORDS를 재확인한다.
+        # 이미 열어본 첨부 공고문 본문에서도 제외 키워드를 재확인한다. 2026-10-06 요청: 걸려도 확인필요로만 낮춘다.
         exclude_hits = set()
         for text in texts:
             exclude_hits.update(matches_exclude_keyword(text))
         if exclude_hits:
-            print(f"  [제외] 첨부파일 본문에서 제외 키워드 {sorted(exclude_hits)} 확인 -> 배제")
-            continue
+            print(f"  [확인필요] 첨부파일 본문에서 제외 키워드 {sorted(exclude_hits)} 확인")
         item.pop("_attachment_urls", None)
         still_relevant.append(item)
+        doubts.append((item, cert, exclude_hits))
     relevant = still_relevant
 
     relevant.sort(key=lambda item: item.get("bidNtceDt", ""))
@@ -297,6 +299,12 @@ def get_daily_relevant_bizinfo(start_date=None, end_date=None, alio_orgs=None):
     )
 
     attach_confidence(relevant, alio_orgs)
+    # attach_confidence가 _tier/_reasons를 새로 쓰므로 첨부 검사 결과는 그 뒤에 반영한다.
+    for item, cert, exclude_hits in doubts:
+        if cert == "mention":
+            downgrade(item, "첨부파일에 소상공인·중소기업 확인서가 언급됨(신청자격 제한인지 불확실) — 직접 확인 필요")
+        if exclude_hits:
+            downgrade_for_doc_exclude(item, exclude_hits, "첨부파일")
 
     today = datetime.now().date()
     before_deadline_gate = len(relevant)

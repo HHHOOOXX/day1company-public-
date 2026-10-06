@@ -1,13 +1,15 @@
 """CLI 진입점.
 
 서브커맨드:
-  notify [카테고리1,카테고리2,...] [--quiet-if-empty] [--dry-run]
+  notify [카테고리1,카테고리2,...] [--quiet-if-empty] [--dry-run] [--from YYYY-MM-DD --to YYYY-MM-DD]
                                        - 실제 Slack 발송 (+ SQLite에 upsert, 중복 발송 방지)
                                          --quiet-if-empty: 오늘 이미 정상 발송된 기록이 있으면 즉시 종료.
                                          그렇지 않을 때도 새 공고/확실후보 리마인드/수집경고가 다 없으면 생략
                                          (정시 실행이 지연될 때를 대비한 백업 스케줄용)
                                          --dry-run: 수집/필터링/메시지 구성까지만 하고 Slack 발송과
                                          발송 기록(notified/daily_sends)은 남기지 않는다(CI 동작 확인용)
+                                         --from/--to: 기본 조회 기간(직전 발송일~어제) 대신 이 게시일 범위를
+                                         조회한다(놓친 날짜 재조회용). 이미 발송된 공고는 다시 보내지 않는다
   daily [카테고리1,카테고리2,...]    - 발송 전 미리보기 (DB에 손대지 않음, 콘솔 텍스트)
   preview [카테고리1,카테고리2,...]  - 발송 전 미리보기 (DB에 손대지 않음, Slack UI처럼 생긴 로컬 HTML로 브라우저에 열림)
   classify [카테고리] [일수]          - 업종분류/키워드 교차 집계
@@ -119,6 +121,8 @@ def _fetch_alio_orgs() -> set:
 
 
 COLLECTION_TIME_LIMIT_SECONDS = 240
+# --from/--to 재조회(여러 날짜를 한 번에 봄)용 상한. GitHub Actions 작업 시간과 무관하게 넉넉히 둔다.
+BACKFILL_TIME_LIMIT_SECONDS = 900
 
 
 def _collect_agency_notices(conn, start_date, end_date, alio_orgs, other_items) -> list:
@@ -146,10 +150,11 @@ def _collect_agency_notices(conn, start_date, end_date, alio_orgs, other_items) 
 
 def run_daily_notification(
     categories=("용역",), include_pre_spec: bool = True, include_bizinfo: bool = True, quiet_if_empty: bool = False,
-    dry_run: bool = False, include_agency: bool = True,
+    dry_run: bool = False, include_agency: bool = True, date_range=None,
 ):
-    """기준 기간(월요일은 직전 금요일 하루, 그 외엔 어제 하루) 관심 공고 + 사전규격(용역) + 기업마당
+    """기준 기간(get_lookback_range — 직전 발송일부터 어제까지) 관심 공고 + 사전규격(용역) + 기업마당
     지원사업을 수집해 Slack으로 발송한다.
+    date_range: (시작일, 종료일) date 튜플. 주면 기본 기간 대신 그 범위를 조회한다(놓친 날짜 재조회용).
     발송 전 SQLite(data/notifier.db)에 upsert하고, 예전에 이미 발송된 공고는 다시 보내지 않는다.
     (스케줄러가 매일 호출할 진입점)
 
@@ -165,7 +170,7 @@ def run_daily_notification(
         print(f"[공휴일] 오늘({today_for_holiday.isoformat()})은 '{holiday_name}'이라 수집/발송 없이 종료합니다.")
         return
 
-    start_date, end_date = get_lookback_range()
+    start_date, end_date = date_range or get_lookback_range()
     today_str = datetime.now().date().isoformat()
     conn = db.get_connection()
     # 2026-10-01: Drive 제안 검토 폴더와 짝지어진 공고의 발주기관을 '과거 제안 기관' 판정에 더한다(proposals.py).
@@ -185,7 +190,9 @@ def run_daily_notification(
     # 2026-09-29: 180초 -> 240초. 세 소스를 끝까지 검사한 CI 실측이 160초로 여유가 20초뿐이었다.
     # 더 늘리면 안 된다 — 10:01 정시 실행이 10:07 백업(schedule, --quiet-if-empty) 전에 발송을 끝내야
     # 백업이 has_sent_today로 조용히 종료한다(늦어지면 중복 발송).
-    set_collection_deadline(COLLECTION_TIME_LIMIT_SECONDS)
+    # 날짜를 지정한 재조회는 정시 발송이 아니라 백업과 겹칠 일이 없으므로 시간 상한을 넉넉히 준다.
+    time_limit = BACKFILL_TIME_LIMIT_SECONDS if date_range else COLLECTION_TIME_LIMIT_SECONDS
+    set_collection_deadline(time_limit)
     collection_started = time.monotonic()
     all_pairs = []
     COLLECTION_WARNINGS.clear()
@@ -252,7 +259,7 @@ def run_daily_notification(
     # 저장된 뒤에 돌려야 "필터가 놓친 공고"를 잡을 수 있어서 수집이 다 끝난 이 자리에서 한다.
     sync_proposals(conn, COLLECTION_WARNINGS)
 
-    print(f"[수집 완료] 소요 {time.monotonic() - collection_started:.0f}초 (상한 {COLLECTION_TIME_LIMIT_SECONDS}초)")
+    print(f"[수집 완료] 소요 {time.monotonic() - collection_started:.0f}초 (상한 {time_limit}초)")
 
     # 대시보드(AX사업기획실 공고목록)는 오늘자 전체 관심 공고(신규/기존 발송 여부 무관)를 담아서
     # 매 실행마다 최신 상태로 갱신한다. docs/index.html에 고정 경로로 써서, 호스팅(GitHub Pages 등)이
@@ -277,6 +284,8 @@ def run_daily_notification(
     # 카드와 헤더 문구로 명확히 구분되므로 서로 혼동되지 않는다.
     core_entries = [e for e in urgent_entries if e[2].get("_tier") != "review"]
     review_entries = [e for e in urgent_entries if e[2].get("_tier") == "review"]
+    # 2026-10-06 요청: 제외 키워드에 걸렸지만 교육·콘텐츠 신호가 강한 우선검토 건을 확인필요 섹션 맨 앞에 둔다.
+    review_entries = _priority_first(review_entries)
 
     # 2026-09-23 피드백: 확실포함 공고가 하나도 없는 날엔 "확인해볼 만한 공고"를 5건 -> 10건으로
     # 늘리고, 그중에서도 우리 공공사업그룹이 최근 제안서를 넣었던 기관(PROPOSAL_HISTORY, Google Drive
@@ -290,7 +299,7 @@ def run_daily_notification(
         review_top_n = 10
         proposal_matches = [e for e in review_entries if is_prior_proposal(e[2])[0]]
         other_review = [e for e in review_entries if not is_prior_proposal(e[2])[0]]
-        review_entries = (proposal_matches + other_review)[:review_top_n]
+        review_entries = _priority_first(proposal_matches + other_review)[:review_top_n]
 
     # 2026-09-22 피드백: "⚠️확인필요 N건 포함" 같은 내부 등급 문구 없이, 그냥 오늘 몇 건씩 확인했는지만
     # 담백하게 알려준다.
@@ -393,6 +402,32 @@ def run_daily_notification(
     conn.close()
 
 
+def _priority_first(entries: list) -> list:
+    """우선검토(_priority_review) 건을 앞으로 모은다. 같은 그룹 안의 순서는 그대로 둔다."""
+    return [e for e in entries if e[2].get("_priority_review")] + [e for e in entries if not e[2].get("_priority_review")]
+
+
+def _parse_date_range(args: list):
+    """notify 인자에서 --from/--to(YYYY-MM-DD)를 읽는다. 둘 다 없으면 None, --to가 없으면 --from 하루."""
+    def _value(flag):
+        if flag not in args:
+            return None
+        idx = args.index(flag)
+        if idx + 1 >= len(args):
+            raise SystemExit(f"[에러] {flag} 뒤에 날짜(YYYY-MM-DD)가 필요합니다.")
+        return datetime.strptime(args[idx + 1], "%Y-%m-%d").date()
+
+    start, end = _value("--from"), _value("--to")
+    if start is None:
+        if end is not None:
+            raise SystemExit("[에러] --to는 --from과 같이 써야 합니다.")
+        return None
+    end = end or start
+    if end < start:
+        raise SystemExit("[에러] --to가 --from보다 앞섭니다.")
+    return start, end
+
+
 def _require_g2b_key():
     """나라장터 API를 실제로 호출하는 서브커맨드 진입 시점에만 키 유무를 확인한다.
     (config.py는 더 이상 import 시점에 강제 종료하지 않는다 — API를 전혀 안 쓰고 DB만 읽는
@@ -418,10 +453,14 @@ def main():
         args = sys.argv[2:]
         quiet_if_empty = "--quiet-if-empty" in args
         dry_run = "--dry-run" in args
-        positional = [a for a in args if not a.startswith("--")]
+        date_range = _parse_date_range(args)
+        flag_values = {args[i + 1] for i, a in enumerate(args[:-1]) if a in ("--from", "--to")}
+        positional = [a for a in args if not a.startswith("--") and a not in flag_values]
         categories = positional[0].split(",") if positional else ["용역"]
         try:
-            run_daily_notification(categories=categories, quiet_if_empty=quiet_if_empty, dry_run=dry_run)
+            run_daily_notification(
+                categories=categories, quiet_if_empty=quiet_if_empty, dry_run=dry_run, date_range=date_range
+            )
         except Exception as exc:
             # 소스별 try/except로도 못 막는, 완전히 예상 못한 버그용 마지막 안전망.
             # 팀 채널에는 정리된 공고문만 보여야 하므로 슬랙으로는 알리지 않는다 —

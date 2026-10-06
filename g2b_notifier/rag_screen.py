@@ -7,10 +7,9 @@
 키워드 필터를 통과한 후보(하루 0~5건 수준)마다 아래 순서로 본다:
   1) 상세페이지 본문 규칙 검사 — 제목엔 안 드러나는 제외 사유를 본문에서 찾는다. 나라장터·기업마당
      파이프라인이 첨부파일 본문에 쓰는 것과 같은 함수를 그대로 쓴다:
-       - 제외 키워드(EXCLUDE_KEYWORDS) — doc_extract.matches_exclude_keyword
-       - 서울 외 지역 소재 기업 한정 — bizinfo.is_region_restricted_by_attachment
-       - 소상공인·중소기업 확인서 요구 — doc_extract.requires_ineligible_certificate
-     하나라도 걸리면 제외한다.
+       - 제외 키워드(DOC_EXCLUDE_KEYWORDS) — doc_extract.matches_exclude_keyword → 확인필요로 낮춤(2026-10-06)
+       - 서울 외 지역 소재 기업 한정 — bizinfo.is_region_restricted_by_attachment → 제외
+       - 소상공인·중소기업 확인서 — doc_extract.certificate_requirement → 소지 요구면 제외, 언급만 있으면 확인필요
   2) 과거 사례 검색(RAG) — 후보 제목과 비슷한 과거 공고를 찾는다. 통과 사례는 DB postings(나라장터·
      사전규격·기업마당 필터를 통과해 발송된 공고), 제외 사례는 DB raw_titles 중 필터를 통과하지 못한 공고다.
      제외 키워드가 걸려서 빠졌던 과거 공고가 통과 사례보다 더 비슷하면 확인필요로 낮추고 그 사례를 사유로 보여준다.
@@ -23,8 +22,9 @@ import re
 from collections import Counter
 
 from .bizinfo import is_region_restricted_by_attachment
+from .classify import downgrade, downgrade_for_doc_exclude
 from .config import EXCLUDE_KEYWORDS
-from .doc_extract import matches_exclude_keyword, requires_ineligible_certificate
+from .doc_extract import certificate_requirement, matches_exclude_keyword
 
 TOP_K_EXAMPLES = 5
 # 가중 Jaccard 유사도 기준. 2026-10-01 기관 게시판 최근 공고 약 30건으로 실측: 가장 비슷한 과거 제외 사례의
@@ -109,15 +109,21 @@ class ExampleIndex:
 # ---------------------------------------------------------------- 2차 검토
 
 def _body_exclusion(body: str):
-    """본문에서 제외 사유를 찾으면 사유 문자열, 없으면 None."""
-    hits = matches_exclude_keyword(body)
-    if hits:
-        return f"본문에 제외 키워드 {sorted(hits)}"
+    """본문에서 확정 제외 사유를 찾으면 사유 문자열, 없으면 None."""
     if is_region_restricted_by_attachment([body]):
         return "본문 신청자격이 서울 외 지역 소재 기업 한정"
-    if requires_ineligible_certificate(body):
-        return "본문 제출서류에 소상공인·중소기업 확인서 요구"
+    if certificate_requirement(body) == "restricted":
+        return "본문에 소상공인·중소기업 확인서 소지 요구"
     return None
+
+
+def _body_doubts(item: dict, body: str) -> None:
+    """확정 제외까지는 아닌 본문 의심 사유를 확인필요로 반영한다(2026-10-06: 예전엔 제외 키워드도 제외했음)."""
+    hits = matches_exclude_keyword(body)
+    if hits:
+        downgrade_for_doc_exclude(item, hits, "상세페이지 본문")
+    if certificate_requirement(body) == "mention":
+        downgrade(item, "본문에 소상공인·중소기업 확인서가 언급됨(신청자격 제한인지 불확실) — 직접 확인 필요")
 
 
 def screen_items(items: list, detail_texts: dict, postings: list, raw_titles: list) -> list:
@@ -138,22 +144,18 @@ def screen_items(items: list, detail_texts: dict, postings: list, raw_titles: li
             if reason:
                 print(f"  [제외] {title[:50]} — {reason}")
                 continue
+            _body_doubts(item, body)
         else:
-            _downgrade(item, "상세페이지 본문을 읽지 못해 본문 기준 제외 규칙을 확인하지 못함 — 직접 확인 필요")
+            downgrade(item, "상세페이지 본문을 읽지 못해 본문 기준 제외 규칙을 확인하지 못함 — 직접 확인 필요")
 
         passed, rejected = index.retrieve(title)
         best_pass = passed[0][0] if passed else 0.0
         if rejected and rejected[0][0] >= SIMILAR_REJECT_THRESHOLD and rejected[0][0] > best_pass:
             score, example = rejected[0]
-            _downgrade(item, f"예전에 제외됐던 비슷한 공고가 있음: {example} (유사도 {score:.2f})")
+            downgrade(item, f"예전에 제외됐던 비슷한 공고가 있음: {example} (유사도 {score:.2f})")
             print(f"  [확인필요] {title[:50]} — 유사 제외 사례({score:.2f}): {example[:60]}")
         else:
             print(f"  [통과] {title[:50]}" + (f" — 유사 통과 사례({best_pass:.2f}): {passed[0][1][:60]}" if passed else ""))
         kept.append(item)
     return kept
 
-
-def _downgrade(item: dict, reason: str) -> None:
-    """확인필요(review)로 낮추고 사유를 붙인다. ⭐확실후보(과거 수주 기관)여도 의심 사유가 있으면 낮춘다."""
-    item["_tier"] = "review"
-    item["_reasons"] = list(item.get("_reasons") or []) + [reason]

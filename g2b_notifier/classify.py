@@ -96,6 +96,47 @@ def _keyword_confidence(title: str) -> str:
     return "strong"
 
 
+def title_exclude_hits(title: str) -> list:
+    """제목에 걸린 제외 키워드(EXCLUDE_KEYWORDS) 목록."""
+    return _matched_keywords(title, EXCLUDE_KEYWORDS)
+
+
+_NOT_FIT_SIGNALS = {"인공지능"}
+
+
+def has_strong_fit(title: str) -> bool:
+    """제목에 데이원컴퍼니 사업(교육·콘텐츠 기획/개발·운영)에 맞는 강한 신호가 있는지.
+    구체적인 교육/콘텐츠 키워드('콘텐츠', '교육과정', '양성', '창업' 등)가 있거나, 범용어라도 '교육'과 '운영'이
+    함께 나오면(예: "OO 교육 운영 용역") 강한 신호로 본다. '인공지능'만으로는 강한 신호로 보지 않는다 —
+    "OO대학교 인공지능 단과대학 내 VR 실습실 장비 설치사업"처럼 사업 대상 이름에 들어가는 경우가 많다.
+    2026-10-06 요청: 이 신호가 있으면 제외 키워드(제목·첨부문서)나 업종 미보유에 걸려도 버리지 않고 확인필요로 보낸다."""
+    hits = set(_matched_keywords(title, EDU_KEYWORDS))
+    if hits - WEAK_EDU_KEYWORDS - _NOT_FIT_SIGNALS:
+        return True
+    return {"교육", "운영"} <= hits
+
+
+def downgrade(item: dict, reason: str, priority: bool = False) -> None:
+    """확인필요(review)로 낮추고 사유를 붙인다. ⭐확실후보(과거 수주 기관)여도 의심 사유가 있으면 낮춘다.
+    priority=True면 확인필요 중에서도 먼저 볼 '우선검토' 대상으로 표시한다 — 제외 키워드에 걸렸지만 교육·콘텐츠
+    신호가 강한 공고(2026-10-06 요청). 슬랙 확인필요 섹션에서 맨 앞에 오고 카드에 '우선검토' 표시가 붙는다."""
+    item["_tier"] = "review"
+    item["_reasons"] = list(item.get("_reasons") or []) + [reason]
+    if priority:
+        item["_priority_review"] = True
+
+
+def downgrade_for_doc_exclude(item: dict, hits, where: str) -> None:
+    """첨부문서·상세페이지 본문에서 제외 키워드가 나온 공고를 확인필요로 낮춘다(2026-10-06: 예전엔 제외했음).
+    제목의 교육·콘텐츠 신호가 강하면 우선검토로 올린다."""
+    title = item.get("bidNtceNm", "")
+    hits = sorted(hits)
+    if has_strong_fit(title):
+        downgrade(item, f"{where}에 제외 키워드 {hits}가 있지만 제목의 교육·콘텐츠 신호가 강함 — 우선 확인 필요", priority=True)
+    else:
+        downgrade(item, f"{where}에 제외 키워드 {hits}가 있음 — 실제 사업 내용 확인 필요")
+
+
 def is_relevant_bid(item: dict, alio_orgs: set = None) -> bool:
     """우리팀(교육회사, 대학교/지자체/공공기관 대상) 기준 관심 공고 여부.
     키워드만으로는 노이즈가 많아서, 발주기관 매칭과 결합될 때만 인정한다.
@@ -103,10 +144,13 @@ def is_relevant_bid(item: dict, alio_orgs: set = None) -> bool:
     다른 조건과 무관하게 제외한다.
     2026-09-22 피드백: 과거 제안서를 제출했던 기관(PROPOSAL_HISTORY)의 신규 공고는, 키워드/발주기관
     조건을 다 만족하지 못해도(예: ORG_KEYWORDS에 없는 발주처 유형) 일단 통과시킨다 — 이미 관계가
-    있는 기관이라 놓치면 안 되므로. 확신도는 낮게(review) 매겨지고 classify_confidence에서 사유가 붙는다."""
+    있는 기관이라 놓치면 안 되므로. 확신도는 낮게(review) 매겨지고 classify_confidence에서 사유가 붙는다.
+    2026-10-06 요청: 제목에 제외 키워드가 있어도 교육·콘텐츠 신호가 강하면(has_strong_fit) 제외하지 않는다 —
+    "공공부문 인공지능 신뢰기반 제도 교육 및 홍보 콘텐츠 제작"(R26BK01751861)이 '홍보' 하나로 빠졌었다.
+    이런 건은 attach_confidence에서 우선검토 확인필요로 표시된다."""
     title = item.get("bidNtceNm", "")
     org = item.get("ntceInsttNm", "")
-    if _matches_any(title, EXCLUDE_KEYWORDS):
+    if title_exclude_hits(title) and not has_strong_fit(title):
         return False
     if item.get("pubPrcrmntLrgClsfcNm", "") in EXCLUDE_PROCUREMENT_CATEGORIES:
         return False
@@ -197,7 +241,7 @@ def is_relevant_prespec(item: dict, learned_keywords: set, alio_orgs: set = None
     업종/지역 API로 걸러낼 안전망이 없어서 애초에 더 엄격한 기준으로 들어오는 것 자체를 좁혀야 한다."""
     title = item.get("bidNtceNm", "")
     org = item.get("ntceInsttNm", "")
-    if _matches_any(title, EXCLUDE_KEYWORDS):
+    if title_exclude_hits(title) and not has_strong_fit(title):
         return False
     if not learned_keywords:
         return False
@@ -258,6 +302,10 @@ def attach_confidence(items: list, alio_orgs: set = None) -> list:
         else:
             item["_tier"] = result["tier"]
             item["_reasons"] = result["reasons"]
+        # is_relevant_bid/is_relevant_prespec이 교육·콘텐츠 신호가 강해서 남겨둔 제외 키워드 공고(2026-10-06).
+        hits = title_exclude_hits(item.get("bidNtceNm", ""))
+        if hits:
+            downgrade(item, f"제목에 제외 키워드 {hits}가 있지만 교육·콘텐츠 신호가 강함 — 우선 확인 필요", priority=True)
     return items
 
 

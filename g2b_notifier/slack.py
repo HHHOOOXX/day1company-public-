@@ -140,7 +140,8 @@ def format_urgent_digest(entries: list, today, top_n: int = 8, title: str = "\U0
         url = item.get("bidNtceDtlUrl", "")
         title_part = f"<{url}|{item_title}>" if url else item_title
         date_text = f"{d.month}/{d.day}" if d else "미정"
-        lines.append(f"{idx}. *[{org}]* {title_part} — {item.get('_deadline_basis') or label} {date_text}  `{tag}`")
+        priority = "  `우선검토`" if item.get("_priority_review") else ""
+        lines.append(f"{idx}. *[{org}]* {title_part} — {item.get('_deadline_basis') or label} {date_text}  `{tag}`{priority}")
 
     return "\n".join(lines)
 
@@ -238,6 +239,9 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
 
         budget_text = format_money(item.get("asignBdgtAmt", ""))
         meta_line = f"{org} · {budget_text} · {item.get('_deadline_basis') or label} {dday_text}"
+        # 2026-10-06: 제외 키워드에 걸렸지만 교육·콘텐츠 신호가 강한 확인필요 건(classify.downgrade priority=True).
+        if item.get("_priority_review"):
+            title_line = f"{title_line}  `우선검토`"
 
         blocks.append(
             {

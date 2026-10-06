@@ -20,7 +20,7 @@ from io import BytesIO
 import olefile
 from pypdf import PdfReader
 
-from .config import EXCLUDE_KEYWORDS
+from .config import DOC_EXCLUDE_KEYWORDS
 
 _HWPTAG_PARA_TEXT = 0x10 + 51  # HWPTAG_BEGIN(0x10) + 51
 
@@ -134,29 +134,52 @@ _LABELED_CODE_RE = re.compile(r"업종코드\s*[:：]?\s*(\d{3,4})")
 # 카테고리에 속하지 않음)가 발급받을 수 없는 자격이라 참가 불가로 판정한다.
 _INELIGIBLE_CERTIFICATE_RE = re.compile(r"(?:소상공인|중소기업)(?:자)?[·ㆍ\s]*확인서")
 
+# 2026-10-06: 확인서 단어가 나오기만 하면 제외하던 방식은 참가자격이 아닌 문맥에도 걸렸다(실사례: R26BK01751973
+# 우즈베키스탄 행정아카데미 PMC — "가점 증빙서류 등 기타 중소기업 확인서"). 문맥을 셋으로 나눈다:
+#   - 바로 앞에 가점·우대·해당 시 같은 말이 있으면 참가자격이 아니므로 무시한다.
+#   - 바로 뒤에 "~를 소지한 자"가 오면 참가자격 제한으로 확정한다(실사례: "소기업·소상공인 확인서를 소지한 자",
+#     "소기업·소상공인확인서(입찰마감일 전일까지 발급된 것으로 유효기간 내에 있어야 함)를 소지한 자").
+#   - 그 밖에(제출서류 목록에 "중·소기업·소상공인 확인서 1부"만 있는 경우 등)는 제한인지 문서만으로 확정할 수
+#     없어 확인필요로 보낸다(실사례: R26BK01753055 경제금융교육 통합 홈페이지 구축).
+_CERT_BONUS_CONTEXT_RE = re.compile(r"가점|가산|우대|감면|면제|해당\s*시|해당자|해당\s*업체|해당하는\s*경우|해당되는\s*경우")
+_CERT_REQUIRED_CONTEXT_RE = re.compile(r"소지|보유한\s*자|발급받은\s*자")
+_CERT_BEFORE_WINDOW = 40
+_CERT_AFTER_WINDOW = 80
+
+
+def certificate_requirement(text: str):
+    """본문 텍스트의 소상공인/중소기업 확인서 언급을 문맥으로 판정한다.
+    "restricted": 확인서 소지를 참가자격으로 요구함(데이원컴퍼니는 중견기업이라 발급 불가 → 참가 불가).
+    "mention": 확인서를 언급하지만 참가자격 제한인지 확정할 수 없음(제출서류 목록 등) → 확인필요.
+    None: 언급이 없거나 가점·해당 시 제출 같은 참가자격과 무관한 문맥뿐."""
+    text = text or ""
+    found = None
+    for m in _INELIGIBLE_CERTIFICATE_RE.finditer(text):
+        if _CERT_BONUS_CONTEXT_RE.search(text[max(0, m.start() - _CERT_BEFORE_WINDOW):m.start()]):
+            continue
+        if _CERT_REQUIRED_CONTEXT_RE.search(text[m.end():m.end() + _CERT_AFTER_WINDOW]):
+            return "restricted"
+        found = "mention"
+    return found
+
 
 def requires_ineligible_certificate(text: str) -> bool:
     """본문 텍스트에 우리가 발급받을 수 없는 확인서(소상공인확인서/중소기업확인서류)가
-    참가자격/제출서류로 명시돼 있으면 True."""
-    return bool(_INELIGIBLE_CERTIFICATE_RE.search(text or ""))
+    참가자격으로 명시돼 있으면 True."""
+    return certificate_requirement(text) == "restricted"
 
 
 # 2026-09-22 피드백: 나라장터 API의 title 필드(사전규격 prdctClsfcNoNm은 품명 분류값, 입찰공고
 # bidNtceNm도 종종 영어 고유명사가 섞여 실제 내용을 가늠하기 어려운 경우가 있음)만으로는 진짜 사업
 # 내용을 알 수 없는 공고가 있다(실사례: R26BD00276858 — 고려대학교 ANCHOR사업단 공고. API 제목은
 # 일반 분류값이었지만 실제로는 "KU Global Tech Career Fair 운영 용역"으로, 행사 기획·부스 설치·
-# 홍보물 제작 등을 포함한 채용박람회 운영 대행 용역이었음 — EXCLUDE_KEYWORDS 도메인인데 제목 필드만
-# 봐서는 걸러지지 않았음). "과업명:" 라벨이 붙은 한 줄만 뽑아 확인하는 방식은 이 실사례에서 실패했다
-# (배제 근거인 "설치"/"홍보"가 과업범위 세부 항목에만 있고 과업명 줄 자체엔 없었음) — 그래서 첨부
-# 문서 본문 전체를 대상으로 검사한다.
+# 홍보물 제작 등을 포함한 채용박람회 운영 대행 용역이었음). 그래서 첨부 문서 본문 전체를 검사한다.
+# 2026-10-06: 본문에는 제목용 EXCLUDE_KEYWORDS 대신 구체적인 표현만 모은 DOC_EXCLUDE_KEYWORDS를 쓰고,
+# 걸린 공고도 제외하지 않고 확인필요로 낮춘다(호출부).
 def matches_exclude_keyword(text: str) -> list:
-    """텍스트에 EXCLUDE_KEYWORDS 중 하나라도 있으면 매칭된 키워드 목록을 반환한다(없으면 빈 리스트).
-    '설치'/'홍보'처럼 범용적인 단어가 본문 어딘가에 우연히 한 번 등장하는 것만으로 무관한 공고까지
-    오탐 제외될 위험은 있지만, 이미 키워드+발주기관+업종/지역 조건을 다 통과한 소수의 최종 후보
-    (그리고 어차피 업종코드/확인서 확인을 위해 이미 열어보는 첨부파일)에만 적용되므로 감내할 수준으로
-    본다."""
+    """텍스트에 DOC_EXCLUDE_KEYWORDS 중 하나라도 있으면 매칭된 키워드 목록을 반환한다(없으면 빈 리스트)."""
     upper = (text or "").upper()
-    return [kw for kw in EXCLUDE_KEYWORDS if kw.upper() in upper]
+    return [kw for kw in DOC_EXCLUDE_KEYWORDS if kw.upper() in upper]
 
 
 def find_industry_codes(text: str, window: int = 400) -> set:
