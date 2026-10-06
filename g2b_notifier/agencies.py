@@ -113,10 +113,10 @@ def _row(org, key, notice_id, title, url, posted, deadline="") -> dict:
 # ---------------------------------------------------------------- 기관별 파서
 
 
-def _fetch_nipa(board: str, key: str) -> list:
+def _fetch_nipa(board: str, key: str, page: int = 1) -> list:
     """NIPA 사업공고(2-2)/입찰공고(2-3). 한 <tr>에 제목 링크(/home/2-x/ID)와 등록일이 있고,
     사업공고는 "신청기간 : 시작 ~ 종료"가 같이 들어있다(종료일을 마감으로 쓴다)."""
-    html = HTTP.get(f"https://www.nipa.kr/home/{board}", timeout=_TIMEOUT).text
+    html = HTTP.get(f"https://www.nipa.kr/home/{board}?curPage={page}", timeout=_TIMEOUT).text
     rows = []
     for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S):
         m = re.search(rf'<a href="/home/{board}/(\d+)"[^>]*>(.*?)</a>', tr, re.S)
@@ -131,12 +131,13 @@ def _fetch_nipa(board: str, key: str) -> list:
     return rows
 
 
-def _fetch_nia(cb_idx: str, key: str) -> list:
+def _fetch_nia(cb_idx: str, key: str, page: int = 1) -> list:
     """NIA 게시판(cbIdx=99835 공지사항, 78336 입찰공고). <li> 안에 doBbsFView('게시판','글번호',...) 링크와
     'YYYY.MM.DD' 등록일이 있다."""
-    page = HTTP.get(f"https://www.nia.or.kr/site/nia_kor/ex/bbs/List.do?cbIdx={cb_idx}", timeout=_TIMEOUT).text
+    page_html = HTTP.get(f"https://www.nia.or.kr/site/nia_kor/ex/bbs/List.do?cbIdx={cb_idx}&pageIndex={page}",
+                    timeout=_TIMEOUT).text
     rows = []
-    for m in re.finditer(rf"doBbsFView\('{cb_idx}','(\d+)'[^)]*\);return false;\"[^>]*>(.*?)</a>", page, re.S):
+    for m in re.finditer(rf"doBbsFView\('{cb_idx}','(\d+)'[^)]*\);return false;\"[^>]*>(.*?)</a>", page_html, re.S):
         bc_idx, body = m.group(1), m.group(2)
         subject = re.search(r'<span class="subject[^"]*">(.*?)<em', body, re.S)
         src = re.search(r'<span class="src">(.*?)</span>', body, re.S)
@@ -149,10 +150,10 @@ def _fetch_nia(cb_idx: str, key: str) -> list:
     return rows
 
 
-def _fetch_kosac_biz() -> list:
+def _fetch_kosac_biz(page: int = 1) -> list:
     """과학창의재단 사업공고(/menus/274/bns). 서버 렌더링된 <tr>에 등록일/공고번호, 제목 링크,
     접수기간("시작~종료")이 있다."""
-    html = HTTP.get("https://www.kosac.re.kr/menus/274/bns", timeout=_TIMEOUT).text
+    html = HTTP.get(f"https://www.kosac.re.kr/menus/274/bns?page={page}", timeout=_TIMEOUT).text
     rows = []
     for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S):
         m = re.search(r'<a href="/menus/274/bns/(PBANC_\d+)[^"]*">(.*?)</a>', tr, re.S)
@@ -167,9 +168,10 @@ def _fetch_kosac_biz() -> list:
     return rows
 
 
-def _fetch_semas_notice() -> list:
+def _fetch_semas_notice(page: int = 1) -> list:
     """소진공 공지사항(bCd=1). 상세는 fncGoDetail('글번호') -> webBoardView.kmdc POST지만 GET 쿼리로도 열린다."""
-    html = HTTP.get("https://www.semas.or.kr/web/board/webBoardList.kmdc?bCd=1&pNm=BOA0101", timeout=_TIMEOUT).text
+    html = HTTP.get(f"https://www.semas.or.kr/web/board/webBoardList.kmdc?bCd=1&pNm=BOA0101&page={page}",
+                    timeout=_TIMEOUT).text
     rows = []
     for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.S):
         m = re.search(r"fncGoDetail\('(\d+)'\);\"[^>]*>(.*?)</a>", tr, re.S)
@@ -182,12 +184,12 @@ def _fetch_semas_notice() -> list:
     return rows
 
 
-def _fetch_semas_biz() -> list:
+def _fetch_semas_biz(page: int = 1) -> list:
     """소진공 사업공고(bCd=2001). 게시판 메뉴가 POST 폼으로만 열리고, 목록은 소상공인24(sbiz24.kr)로
     링크되는 카드(<a class="aconbox">)다. 등록일이 따로 없어 신청 시작일을 등록일로 쓴다.
     (소진공 '입찰정보' 메뉴는 "조달청 입찰공고 바로가기" 안내뿐이라 나라장터와 같은 데이터 — 수집하지 않는다.)"""
     html = HTTP.post("https://www.semas.or.kr/web/board/webBoardList.kmdc",
-                     data={"bCd": "2001", "pNm": "BOA0101"}, timeout=_TIMEOUT).text
+                     data={"bCd": "2001", "pNm": "BOA0101", "page": str(page)}, timeout=_TIMEOUT).text
     rows = []
     for m in re.finditer(r'<a class="aconbox"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', html, re.S):
         url, card = m.group(1), m.group(2)
@@ -200,12 +202,12 @@ def _fetch_semas_biz() -> list:
     return rows
 
 
-def _fetch_kosmes_notice() -> list:
+def _fetch_kosmes_notice(page: int = 1) -> list:
     """중진공 공지사항. 화면은 AXGrid가 /sh/nts/notice_list.json(POST, 폼 인코딩)을 불러 그린다.
     activatedTab 01=중진공, 02=유관기관. VALI_DT(유효일)는 목록 헤더상 '유효일(마감기한)'이라 마감으로 쓴다."""
     resp = HTTP.post(
         "https://www.kosmes.or.kr/sh/nts/notice_list.json",
-        data={"nowPage": "1", "pageCount": "10", "rowCount": "30", "param": "proc=List",
+        data={"nowPage": str(page), "pageCount": "10", "rowCount": "30", "param": "proc=List",
               "bKind": "popluar", "activatedTab": "01"},
         headers={"X-Requested-With": "XMLHttpRequest",
                  "Referer": "https://www.kosmes.or.kr/nsh/SH/NTS/SHNTS001M0.do"},
@@ -224,14 +226,14 @@ def _kr_proxies():
     return {"http": KR_PROXY_URL, "https": KR_PROXY_URL} if KR_PROXY_URL else None
 
 
-def _fetch_kosmes_bid() -> list:
+def _fetch_kosmes_bid(page: int = 1) -> list:
     """중진공 입찰정보(SHNTS005M0). AXGrid가 /sh/nts/notice03.json(POST)을 불러 그린다. 글별 상세페이지가 없고
     첨부파일만 있어 링크는 목록 페이지로 둔다(_no_detail_page — 목록 페이지 메뉴 텍스트를 본문으로 검사하지 않게).
     2026-10-06 확인: 최근 16건 모두 나라장터에 같은 공고가 있었다 — 나라장터에 없는 입찰이 올라올 때를 대비해 수집한다."""
     list_url = "https://www.kosmes.or.kr/nsh/SH/NTS/SHNTS005M0.do"
     resp = HTTP.post(
         "https://www.kosmes.or.kr/sh/nts/notice03.json",
-        data={"nowPage": "1", "pageCount": "10", "rowCount": "20", "param": "proc=List"},
+        data={"nowPage": str(page), "pageCount": "10", "rowCount": "20", "param": "proc=List"},
         headers={"X-Requested-With": "XMLHttpRequest", "Referer": list_url},
         timeout=_TIMEOUT,
     )
@@ -246,15 +248,15 @@ def _fetch_kosmes_bid() -> list:
     return rows
 
 
-def _fetch_seoulshinbo() -> list:
+def _fetch_seoulshinbo(page: int = 1) -> list:
     """서울신용보증재단 사업공고(mng_cd=STRY0006). 상권지원 사업공고와 재무팀 자체 입찰공고
     ("[제2026재무팀-66호]입찰공고(...용역)")가 한 게시판에 같이 올라온다. 서버 인증서 체인이 불완전해
     인증서 검증을 끈다(공개 게시판 읽기만 하므로 위험 낮음). 상세는 bbs.goView(페이지, 글번호) ->
     /wbase/contents/bbs/view/{글번호}.do (pageIndex 없이 열면 HTTP 500)."""
-    page = HTTP.get("https://www.seoulshinbo.co.kr/wbase/contents/bbs/list.do?mng_cd=STRY0006",
+    page_html = HTTP.get(f"https://www.seoulshinbo.co.kr/wbase/contents/bbs/list.do?mng_cd=STRY0006&pageIndex={page}",
                     timeout=_TIMEOUT, verify=False, proxies=_kr_proxies()).text
     rows = []
-    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", page, re.S):
+    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", page_html, re.S):
         m = re.search(r"bbs\.goView\('\d+',\s*'(\d+)'\)\"><span[^>]*>(.*?)</span>", tr, re.S)
         if not m:
             continue
@@ -265,20 +267,20 @@ def _fetch_seoulshinbo() -> list:
     return rows
 
 
-def _fetch_iitp(menu: str, board_seq: str, key: str) -> list:
+def _fetch_iitp(menu: str, board_seq: str, key: str, page: int = 1) -> list:
     """IITP 게시판(메뉴 S1T12C37=공지사항/board 7). 화면은 Vue 앱이고 목록은 /board-svc/api/bbs/A/list.do
     (JSON POST)로 불러온다. 페이지 meta의 CSRF 토큰을 헤더에 실어야 해서 목록 페이지를 먼저 한 번 연다.
     입찰공고 게시판(S1T12C38/board 8)도 같은 API로 읽히지만 수집하지 않는다 — [자체조달 ...](IITP가 직접
     계약)·[중앙조달 ...](조달청 대행) 모두 공고는 나라장터에 올라간다(2026-10-01 상세페이지로 확인:
     "[자체조달 사전규격공개] 양자클러스터..." 본문에 나라장터 사전규격번호 R26BD00278386)."""
     list_url = f"https://www.iitp.kr/web/lay1/bbs/S1T12C{menu}/A/{board_seq}/list.do"
-    page = HTTP.get(list_url, timeout=_TIMEOUT).text
-    token = re.search(r'name="_csrf" content="([^"]+)"', page)
+    page_html = HTTP.get(list_url, timeout=_TIMEOUT).text
+    token = re.search(r'name="_csrf" content="([^"]+)"', page_html)
     if not token:
         raise ValueError("CSRF 토큰을 찾지 못함 — 페이지 구조 변경 가능성")
     resp = HTTP.post(
         "https://www.iitp.kr/board-svc/api/bbs/A/list.do",
-        json={"cms_menu_seq": menu, "cpage": 1, "rows": 20, "keyword": "", "condition": "", "sort": ""},
+        json={"cms_menu_seq": menu, "cpage": page, "rows": 20, "keyword": "", "condition": "", "sort": ""},
         headers={"X-CSRF-TOKEN": token.group(1), "Referer": list_url},
         timeout=_TIMEOUT,
     )
@@ -314,21 +316,48 @@ def _fetch_kised(pages: int = 3) -> list:
     return rows
 
 
+# 2026-10-06 요청: 연휴가 끼면 며칠치 글이 첫 페이지를 넘길 수 있어 게시판마다 AGENCY_PAGES쪽까지 읽는다.
+AGENCY_PAGES = 3
+
+
+def _paged(fetch_page, pages: int = AGENCY_PAGES):
+    """fetch_page(page) -> rows 를 1~pages쪽까지 읽어 합친다. 상단 고정글은 쪽마다 반복되므로 글번호로 중복을 없애고,
+    새 글이 하나도 없는 쪽이 나오면(마지막 쪽이거나 사이트가 쪽 번호를 무시함) 거기서 멈춘다.
+    첫 쪽 실패는 예외를 그대로 올려 _fetch_one이 재시도·경고하게 하고, 뒤쪽 실패는 그때까지 읽은 것만 쓴다."""
+    def fetch():
+        rows, seen = [], set()
+        for page in range(1, pages + 1):
+            try:
+                batch = fetch_page(page)
+            except Exception as exc:
+                if page == 1:
+                    raise
+                print(f"  [경고] {page}쪽 읽기 실패 — {page - 1}쪽까지만 사용: {exc!r}")
+                break
+            new = [r for r in batch if r["bidNtceNo"] not in seen]
+            if not new:
+                break
+            seen.update(r["bidNtceNo"] for r in new)
+            rows.extend(new)
+        return rows
+    return fetch
+
+
 # (표시명, 파서). 표시명은 로그/경고 메시지용.
 AGENCY_SOURCES = [
-    ("NIPA 사업공고", lambda: _fetch_nipa("2-2", "nipa_biz")),
-    ("NIPA 입찰공고", lambda: _fetch_nipa("2-3", "nipa_bid")),
-    ("NIA 공지사항", lambda: _fetch_nia("99835", "nia_notice")),
-    ("NIA 입찰공고", lambda: _fetch_nia("78336", "nia_bid")),
-    ("IITP 공지사항", lambda: _fetch_iitp("37", "7", "iitp_notice")),
-    ("IITP 입찰공고", lambda: _fetch_iitp("38", "8", "iitp_bid")),
-    ("과학창의재단 사업공고", _fetch_kosac_biz),
-    ("소진공 공지사항", _fetch_semas_notice),
-    ("소진공 사업공고", _fetch_semas_biz),
-    ("중진공 공지사항", _fetch_kosmes_notice),
-    ("중진공 입찰정보", _fetch_kosmes_bid),
-    ("서울신보 사업공고", _fetch_seoulshinbo),
-    ("창업진흥원 사업공고(K-Startup)", _fetch_kised),
+    ("NIPA 사업공고", _paged(lambda p: _fetch_nipa("2-2", "nipa_biz", p))),
+    ("NIPA 입찰공고", _paged(lambda p: _fetch_nipa("2-3", "nipa_bid", p))),
+    ("NIA 공지사항", _paged(lambda p: _fetch_nia("99835", "nia_notice", p))),
+    ("NIA 입찰공고", _paged(lambda p: _fetch_nia("78336", "nia_bid", p))),
+    ("IITP 공지사항", _paged(lambda p: _fetch_iitp("37", "7", "iitp_notice", p))),
+    ("IITP 입찰공고", _paged(lambda p: _fetch_iitp("38", "8", "iitp_bid", p))),
+    ("과학창의재단 사업공고", _paged(_fetch_kosac_biz)),
+    ("소진공 공지사항", _paged(_fetch_semas_notice)),
+    ("소진공 사업공고", _paged(_fetch_semas_biz)),
+    ("중진공 공지사항", _paged(_fetch_kosmes_notice)),
+    ("중진공 입찰정보", _paged(_fetch_kosmes_bid)),
+    ("서울신보 사업공고", _paged(_fetch_seoulshinbo)),
+    ("창업진흥원 사업공고(K-Startup)", lambda: _fetch_kised(AGENCY_PAGES)),
 ]
 
 # 창업진흥원은 K-Startup 전체 목록 중 해당 기관 건만 고르는 방식이라, 며칠 동안 0건이어도 정상이다.
