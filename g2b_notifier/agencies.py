@@ -224,6 +224,28 @@ def _kr_proxies():
     return {"http": KR_PROXY_URL, "https": KR_PROXY_URL} if KR_PROXY_URL else None
 
 
+def _fetch_kosmes_bid() -> list:
+    """중진공 입찰정보(SHNTS005M0). AXGrid가 /sh/nts/notice03.json(POST)을 불러 그린다. 글별 상세페이지가 없고
+    첨부파일만 있어 링크는 목록 페이지로 둔다(_no_detail_page — 목록 페이지 메뉴 텍스트를 본문으로 검사하지 않게).
+    2026-10-06 확인: 최근 16건 모두 나라장터에 같은 공고가 있었다 — 나라장터에 없는 입찰이 올라올 때를 대비해 수집한다."""
+    list_url = "https://www.kosmes.or.kr/nsh/SH/NTS/SHNTS005M0.do"
+    resp = HTTP.post(
+        "https://www.kosmes.or.kr/sh/nts/notice03.json",
+        data={"nowPage": "1", "pageCount": "10", "rowCount": "20", "param": "proc=List"},
+        headers={"X-Requested-With": "XMLHttpRequest", "Referer": list_url},
+        timeout=_TIMEOUT,
+    )
+    rows = []
+    for x in resp.json().get("ds_infoList", []):
+        reg = x.get("TO_CHAR(REG_DTM,'YYYYMMDD')") or ""
+        posted = f"{reg[:4]}-{reg[4:6]}-{reg[6:8]}" if len(reg) == 8 else (x.get("BIDPRICE_STIME") or "")[:10]
+        row = _row("중소벤처기업진흥공단", "kosmes_bid", x.get("BUBD_BID_PUAN_SLNO"), x.get("TITL_NM", ""),
+                   list_url, posted, (x.get("BIDPRICE_TTIME") or "")[:10])
+        row["_no_detail_page"] = True
+        rows.append(row)
+    return rows
+
+
 def _fetch_seoulshinbo() -> list:
     """서울신용보증재단 사업공고(mng_cd=STRY0006). 상권지원 사업공고와 재무팀 자체 입찰공고
     ("[제2026재무팀-66호]입찰공고(...용역)")가 한 게시판에 같이 올라온다. 서버 인증서 체인이 불완전해
@@ -304,12 +326,16 @@ AGENCY_SOURCES = [
     ("소진공 공지사항", _fetch_semas_notice),
     ("소진공 사업공고", _fetch_semas_biz),
     ("중진공 공지사항", _fetch_kosmes_notice),
+    ("중진공 입찰정보", _fetch_kosmes_bid),
     ("서울신보 사업공고", _fetch_seoulshinbo),
     ("창업진흥원 사업공고(K-Startup)", _fetch_kised),
 ]
 
 # 창업진흥원은 K-Startup 전체 목록 중 해당 기관 건만 고르는 방식이라, 며칠 동안 0건이어도 정상이다.
 _EMPTY_OK_SOURCES = {"창업진흥원 사업공고(K-Startup)"}
+
+# 입찰공고 전용 게시판. 제목에 '입찰' 같은 단어가 없어도(중진공: "OO 연구용역") 전부 나라장터에서 같은 공고를 찾아본다.
+_BID_BOARD_KEYS = {"nipa_bid", "nia_bid", "iitp_bid", "kosmes_bid"}
 
 
 def _fetch_one(name, fetcher) -> list:
@@ -458,7 +484,10 @@ _BODY_END_RE = re.compile(r"만족도 조사|이 페이지에서 제공하는 �
 
 def fetch_detail_text(item: dict) -> str:
     """상세페이지 본문 텍스트(스크립트·스타일 제거). 실패하면 빈 문자열.
-    IITP·중진공·소상공인24는 본문을 자바스크립트로 그려서 여기선 메뉴 텍스트 정도만 나온다."""
+    IITP·중진공·소상공인24는 본문을 자바스크립트로 그려서 여기선 메뉴 텍스트 정도만 나온다.
+    상세페이지가 없는 게시판(_no_detail_page, 중진공 입찰정보)은 빈 문자열."""
+    if item.get("_no_detail_page"):
+        return ""
     proxies = _kr_proxies() if "seoulshinbo.co.kr" in item["bidNtceDtlUrl"] else None
     try:
         page = HTTP.get(item["bidNtceDtlUrl"], timeout=_TIMEOUT, verify=False, proxies=proxies).text
@@ -533,7 +562,9 @@ def get_daily_relevant_agency_notices(
             in_range.append(item)
 
     # 조달 절차 제목(입찰·사전규격 등)은 나라장터에서 실제로 찾아질 때만 뺀다(모듈 docstring 2).
-    procurement = [item for item in in_range if _is_procurement_notice(item)]
+    procurement = [
+        item for item in in_range if _is_procurement_notice(item) or item.get("_agency_board") in _BID_BOARD_KEYS
+    ]
     with ThreadPoolExecutor(max_workers=4) as pool:
         lookups = list(pool.map(find_on_g2b, procurement))
     for item, found in zip(procurement, lookups):
