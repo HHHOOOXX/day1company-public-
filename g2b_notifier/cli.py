@@ -37,7 +37,7 @@ from .proposals import print_report as print_proposal_report, sync_proposals
 from .agencies import AGENCY_UNSUPPORTED, fetch_all_agency_rows, get_daily_relevant_agency_notices, normalize_title
 from .alio import fetch_alio_org_names, fetch_alio_preview
 from .bizinfo import fetch_bizinfo_preview, get_daily_relevant_bizinfo
-from .classify import is_prior_proposal, set_learned_proposal_orgs, tag_business_area
+from .classify import has_strong_fit, is_prior_proposal, set_learned_proposal_orgs, tag_business_area
 from .config import (
     BIZINFO_SERVICE_KEY,
     DASHBOARD_URL,
@@ -464,14 +464,23 @@ def _priority_first(entries: list) -> list:
     return [e for e in entries if e[2].get("_priority_review")] + [e for e in entries if not e[2].get("_priority_review")]
 
 
+def _fits_review_card(item: dict) -> bool:
+    """우선검토가 아닌 확인필요 건 중 카드에 올릴 만한지 — 제목에 교육·콘텐츠 신호가 강한(has_strong_fit) 건만 넣는다.
+    2026-10-07 요청: 마감순으로만 채우니 "가천대 의과대학 교육여건 개선 공간조성 공사 설계용역", "예비대학 행사 운영"처럼
+    '교육/운영' 범용어로만 걸린 관련성 낮은 공고가 카드에 들어갔다. 이런 건은 스레드 목록에만 남긴다. 과거 제안 기관이어도
+    예외로 두지 않는다 — 위 두 건이 바로 제안 이력 기관(가천대) 공고였다."""
+    return has_strong_fit(item.get("bidNtceNm", ""))
+
+
 def _mix_priority_cards(entries: list, top_n: int):
     """확인필요 카드 top_n칸을 (카드, 나머지)로 나눈다. 우선검토 건은 top_n // 2 + 1칸(5칸이면 3칸)까지만 넣고
-    남은 칸은 우선검토가 아닌 건으로 채운다. 한쪽이 모자라면 다른 쪽으로 채운다. 각 그룹 안의 순서는 entries 그대로다.
+    남은 칸은 우선검토가 아니면서 _fits_review_card를 통과한 건으로 채운다. 그런 건이 모자라면 우선검토 건으로 채우고,
+    통과하지 못한 건은 카드에 넣지 않는다(칸이 비면 비는 대로 둔다). 각 그룹 안의 순서는 entries 그대로다.
     2026-10-07 요청: 우선검토(첨부에 축제·박람회 등 제외 키워드가 있는 건)가 5칸을 전부 차지해, 첨부가 깨끗한
     아주대 "AI 보안 비교과 Skill-up 교육 운영"(R26BK01745306)이 카드에서 밀려났다."""
     cap = top_n // 2 + 1
     priority = [i for i, e in enumerate(entries) if e[2].get("_priority_review")]
-    others = [i for i, e in enumerate(entries) if not e[2].get("_priority_review")]
+    others = [i for i, e in enumerate(entries) if not e[2].get("_priority_review") and _fits_review_card(e[2])]
     n_priority = min(len(priority), max(cap, top_n - len(others)))
     n_others = min(len(others), top_n - n_priority)
     picked = priority[:n_priority] + others[:n_others]
