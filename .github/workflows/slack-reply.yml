@@ -1,0 +1,41 @@
+name: Slack Thread Reply
+
+# 이미 보낸 공고 알림 메시지의 스레드에 댓글을 하나 더 단다(빠진 공고를 나중에 덧붙일 때).
+# message_link를 비우면 오늘 봇이 SLACK_CHANNEL_ID에 보낸 공고 알림을 찾아 그 스레드에 단다
+# (봇에 channels:history 권한이 필요하다 — 없으면 슬랙에서 '링크 복사'한 메시지 링크를 넣는다).
+on:
+  workflow_dispatch:
+    inputs:
+      text:
+        description: "댓글 내용(Slack mrkdwn)"
+        type: string
+        required: true
+      message_link:
+        description: "댓글을 달 메시지 링크. 비우면 오늘 보낸 공고 알림"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  slack-reply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Post thread reply
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          # 입력값을 셸 스크립트에 직접 끼워 넣지 않고 환경변수로 넘긴다(스크립트 인젝션 방지).
+          REPLY_TEXT: ${{ inputs.text }}
+          MESSAGE_LINK: ${{ inputs.message_link }}
+        run: python test_g2b_api.py slack-reply "$REPLY_TEXT" "$MESSAGE_LINK"

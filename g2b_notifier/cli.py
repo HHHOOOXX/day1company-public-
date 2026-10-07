@@ -18,6 +18,7 @@
   alio-discover                       - ALIO 공공기관 정보 원본 필드 탐색 (ALIO_SERVICE_KEY 필요)
   agency-discover                     - 기관 홈페이지 게시판(NIPA/NIA/중진공 등) 목록 파싱 결과 확인
   slack-test [채널ID|사용자ID]         - 봇 토큰으로 테스트 메시지 + 스레드 댓글 발송(기본: SLACK_CHANNEL_ID)
+  slack-reply <텍스트> [메시지링크]    - 공고 알림 메시지의 스레드에 댓글 추가(링크가 없으면 오늘 보낸 알림을 채널에서 찾음)
   proposals                           - 제안 검토 이력(Drive [제안 및 검토] 폴더 ↔ 공고 연결) 현황
   proposals-sync                      - Drive 폴더를 지금 읽어 제안 이력만 갱신 (GOOGLE_SERVICE_ACCOUNT_JSON 필요)
   (인자 없음 / 카테고리만)             - 최근 입찰공고 미리보기
@@ -60,6 +61,8 @@ from .g2b import (
 )
 from .preview import write_and_open_preview
 from .slack import (
+    find_today_digest_ts,
+    parse_message_link,
     context_section,
     divider,
     format_star_reminder,
@@ -318,9 +321,11 @@ def run_daily_notification(
         proposal_matches = [e for e in review_entries if is_prior_proposal(e[2])[0]]
         other_review = [e for e in review_entries if not is_prior_proposal(e[2])[0]]
         ordered = _priority_first(proposal_matches + other_review)
-        review_entries, review_rest = ordered[:review_top_n], split_top(ordered[review_top_n:], today, len(ordered))[0]
+        review_entries, review_rest = _mix_priority_cards(ordered, review_top_n)
+        review_rest = split_top(review_rest, today, len(review_rest))[0]
     else:
-        review_entries, review_rest = split_top(review_entries, today, review_top_n)
+        ranked = split_top(review_entries, today, len(review_entries))[0]
+        review_entries, review_rest = _mix_priority_cards(ranked, review_top_n)
 
     # 2026-09-22 피드백: "⚠️확인필요 N건 포함" 같은 내부 등급 문구 없이, 그냥 오늘 몇 건씩 확인했는지만
     # 담백하게 알려준다.
@@ -459,6 +464,21 @@ def _priority_first(entries: list) -> list:
     return [e for e in entries if e[2].get("_priority_review")] + [e for e in entries if not e[2].get("_priority_review")]
 
 
+def _mix_priority_cards(entries: list, top_n: int):
+    """확인필요 카드 top_n칸을 (카드, 나머지)로 나눈다. 우선검토 건은 top_n // 2 + 1칸(5칸이면 3칸)까지만 넣고
+    남은 칸은 우선검토가 아닌 건으로 채운다. 한쪽이 모자라면 다른 쪽으로 채운다. 각 그룹 안의 순서는 entries 그대로다.
+    2026-10-07 요청: 우선검토(첨부에 축제·박람회 등 제외 키워드가 있는 건)가 5칸을 전부 차지해, 첨부가 깨끗한
+    아주대 "AI 보안 비교과 Skill-up 교육 운영"(R26BK01745306)이 카드에서 밀려났다."""
+    cap = top_n // 2 + 1
+    priority = [i for i, e in enumerate(entries) if e[2].get("_priority_review")]
+    others = [i for i, e in enumerate(entries) if not e[2].get("_priority_review")]
+    n_priority = min(len(priority), max(cap, top_n - len(others)))
+    n_others = min(len(others), top_n - n_priority)
+    picked = priority[:n_priority] + others[:n_others]
+    picked_set = set(picked)
+    return [entries[i] for i in picked], [e for i, e in enumerate(entries) if i not in picked_set]
+
+
 def _parse_date_range(args: list):
     """notify 인자에서 --from/--to(YYYY-MM-DD)를 읽는다. 둘 다 없으면 None, --to가 없으면 --from 하루."""
     def _value(flag):
@@ -533,6 +553,19 @@ def main():
             sys.exit(1)
         reply = post_with_bot("[테스트] 카드에 못 넣은 공고는 이렇게 스레드 댓글로 달립니다.", thread_ts=ts, channel=target)
         sys.exit(0 if reply else 1)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "slack-reply":
+        # 이미 보낸 공고 알림에 빠진 공고를 나중에 덧붙일 때 쓴다(2026-10-07: 카드에서 밀린 아주대 공고 추가).
+        text = sys.argv[2] if len(sys.argv) > 2 else ""
+        link = sys.argv[3] if len(sys.argv) > 3 else ""
+        if not SLACK_BOT_TOKEN or not text.strip():
+            print("[에러] SLACK_BOT_TOKEN과 댓글 텍스트가 필요합니다.")
+            sys.exit(1)
+        channel, ts = parse_message_link(link) if link.strip() else (None, find_today_digest_ts())
+        if ts is None:
+            print("[에러] 댓글을 달 메시지를 찾지 못했습니다. 슬랙에서 '링크 복사'한 메시지 링크를 넘겨주세요.")
+            sys.exit(1)
+        sys.exit(0 if post_with_bot(text, thread_ts=ts, channel=channel) else 1)
 
     if len(sys.argv) > 1 and sys.argv[1] == "classify":
         _require_g2b_key()

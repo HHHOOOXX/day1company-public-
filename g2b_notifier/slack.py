@@ -1,8 +1,9 @@
 """콘솔 미리보기 출력 + Slack 메시지 포맷팅/발송."""
 
 import os
+import re
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 import requests
 
@@ -334,6 +335,46 @@ def post_with_bot(text: str, blocks: list = None, thread_ts: str = None, max_ret
         print(f"[슬랙] 발송 실패: HTTP {resp.status_code} / {data.get('error') or resp.text[:300]}")
         return None
     print(f"[슬랙] {max_retries}회 재시도 후에도 발송 실패")
+    return None
+
+
+def parse_message_link(link: str):
+    """슬랙 메시지 링크(https://<워크스페이스>.slack.com/archives/C…/p1759798000123456)를 (channel, ts)로 바꾼다.
+    링크가 아니라 ts("1759798000.123456")만 주면 (None, ts). 알아볼 수 없으면 (None, None)."""
+    link = (link or "").strip()
+    m = re.search(r"/archives/([A-Z0-9]+)/p(\d{10})(\d{6})", link)
+    if m:
+        return m.group(1), f"{m.group(2)}.{m.group(3)}"
+    if re.fullmatch(r"\d{10}\.\d{6}", link):
+        return None, link
+    return None, None
+
+
+def find_today_digest_ts(channel: str = None, marker: str = "확인했어요"):
+    """채널 최근 메시지 중 오늘(KST) 봇이 보낸 공고 알림의 ts를 찾는다. 공고 알림 본문 끝의 요약줄
+    ("… 확인했어요")로 알아본다. 봇에 channels:history 권한이 없거나 못 찾으면 None."""
+    from .config import SLACK_BOT_TOKEN, SLACK_CHANNEL_ID
+
+    headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
+    kst = timezone(timedelta(hours=9))
+    midnight = datetime.now(kst).replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        bot_id = requests.post("https://slack.com/api/auth.test", headers=headers, timeout=10).json().get("bot_id")
+        data = requests.get(
+            "https://slack.com/api/conversations.history",
+            params={"channel": channel or SLACK_CHANNEL_ID, "oldest": f"{midnight.timestamp():.6f}", "limit": 50},
+            headers=headers, timeout=10,
+        ).json()
+    except (requests.RequestException, ValueError) as exc:
+        print(f"[슬랙] 채널 기록 조회 실패: {exc!r}")
+        return None
+    if not data.get("ok"):
+        print(f"[슬랙] 채널 기록 조회 실패: {data.get('error')} (메시지 링크를 직접 넘겨주세요)")
+        return None
+    for msg in data.get("messages", []):  # 최신순
+        if msg.get("bot_id") == bot_id and msg.get("thread_ts", msg["ts"]) == msg["ts"] and marker in msg.get("text", ""):
+            return msg["ts"]
+    print("[슬랙] 오늘 보낸 공고 알림 메시지를 채널에서 찾지 못했습니다.")
     return None
 
 
