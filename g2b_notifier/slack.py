@@ -3,7 +3,7 @@
 import os
 import re
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -63,45 +63,6 @@ def format_money(raw) -> str:
     if man <= 0:
         return f"{won:,}원"
     return f"{man:,}만원"
-
-
-def format_star_reminder(star_postings: list, today) -> str:
-    """이미 발송됐지만 마감이 안 지난, 예전에 함께 일한 기관의 공고를 매일 다시 안내하는 섹션.
-    star_postings: db.get_active_star_postings()가 반환하는 postings 테이블 row dict 리스트.
-    2026-09-22 피드백: "확실후보" 같은 내부 용어 없이, 팀원이 바로 이해할 수 있는 문구로 정리."""
-    if not star_postings:
-        return ""
-
-    def _row_deadline(row):
-        raw = (row.get("close_at") or "").strip()
-        if not raw or raw == "미정":
-            return None
-        last_part = raw.split("~")[-1].strip()
-        try:
-            return datetime.strptime(last_part[:10], "%Y-%m-%d").date()
-        except (ValueError, TypeError):
-            return None
-
-    rows = [r for r in star_postings if _row_deadline(r) is None or _row_deadline(r) >= today]
-    rows.sort(key=lambda r: (_row_deadline(r) is None, _row_deadline(r) or date.max))
-    if not rows:
-        return ""
-
-    lines = [f"*\U0001F4CC 예전에 함께 일한 기관에서 새 공고가 떴어요 ({len(rows)}건)*", ""]
-    for idx, row in enumerate(rows, 1):
-        org = row.get("org", "")
-        title = row.get("title", "")
-        url = row.get("url", "")
-        title_part = f"<{url}|{title}>" if url else title
-        d = _row_deadline(row)
-        if d is None:
-            dday_text = f"`{row.get('close_at') or '미정'}`"
-        else:
-            delta = (d - today).days
-            dday_text = f"{_urgency_emoji(delta)} `{d.month}/{d.day} (D-{delta})`" if delta > 0 else f"{_urgency_emoji(delta)} `{d.month}/{d.day} (D-day)`"
-        lines.append(f"`#{idx}` *[{org}]* {title_part} — 마감 {dday_text}")
-
-    return "\n".join(lines)
 
 
 def _pick_top(entries: list, today, top_n: int) -> list:

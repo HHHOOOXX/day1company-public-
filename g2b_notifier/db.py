@@ -180,22 +180,6 @@ def mark_notified(conn: sqlite3.Connection, ids: list) -> None:
     conn.commit()
 
 
-def get_active_star_postings(conn: sqlite3.Connection, today_str: str) -> list:
-    """이미 발송됐더라도(notified=1) 확실후보(is_star=1)면서 마감일이 아직 안 지난 공고를 반환한다.
-    공고마감일까지 매일 다시 안내하는 리마인더 섹션용. 반환값은 postings 테이블 컬럼명 그대로의 dict 리스트."""
-    rows = conn.execute(
-        """
-        SELECT id, source, title, org, budget, posted_at, close_at, url, category_tags
-        FROM postings
-        WHERE is_star = 1 AND notified = 1 AND (close_at IS NULL OR close_at = '' OR close_at >= ?)
-        ORDER BY close_at ASC
-        """,
-        (today_str,),
-    ).fetchall()
-    columns = ["id", "source", "title", "org", "budget", "posted_at", "close_at", "url", "category_tags"]
-    return [dict(zip(columns, row)) for row in rows]
-
-
 def get_historical_bid_titles(conn: sqlite3.Connection) -> list:
     """지금까지 저장된 나라장터 입찰공고(source='g2b_bid') 전체의 (제목, 발주기관) 목록을 반환한다.
     사전규격 필터링용 '학습된 키워드'를 만드는 재료 — classify.build_learned_keywords 참고."""
