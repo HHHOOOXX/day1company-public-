@@ -81,6 +81,15 @@ CREATE TABLE IF NOT EXISTS proposals (
     evidence TEXT,
     updated_date TEXT NOT NULL
 );
+
+-- 2026-10-12: 실무자가 "우리 팀에 맞는 공고"로 고른 공고(config.TEAM_FIT_SEEDS를 매일 실행 때 넣는다). team_fit.py가
+-- 이 공고들과 비슷한 공고를 추천 공고로 올린다.
+CREATE TABLE IF NOT EXISTS team_fit_refs (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    org TEXT,
+    added_date TEXT NOT NULL
+);
 """
 
 RAW_TITLE_RETENTION_DAYS = 60
@@ -178,22 +187,6 @@ def mark_notified(conn: sqlite3.Connection, ids: list) -> None:
         return
     conn.executemany("UPDATE postings SET notified = 1 WHERE id = ?", [(i,) for i in ids])
     conn.commit()
-
-
-def get_active_star_postings(conn: sqlite3.Connection, today_str: str) -> list:
-    """이미 발송됐더라도(notified=1) 확실후보(is_star=1)면서 마감일이 아직 안 지난 공고를 반환한다.
-    공고마감일까지 매일 다시 안내하는 리마인더 섹션용. 반환값은 postings 테이블 컬럼명 그대로의 dict 리스트."""
-    rows = conn.execute(
-        """
-        SELECT id, source, title, org, budget, posted_at, close_at, url, category_tags
-        FROM postings
-        WHERE is_star = 1 AND notified = 1 AND (close_at IS NULL OR close_at = '' OR close_at >= ?)
-        ORDER BY close_at ASC
-        """,
-        (today_str,),
-    ).fetchall()
-    columns = ["id", "source", "title", "org", "budget", "posted_at", "close_at", "url", "category_tags"]
-    return [dict(zip(columns, row)) for row in rows]
 
 
 def get_historical_bid_titles(conn: sqlite3.Connection) -> list:
@@ -316,6 +309,28 @@ def get_proposals(conn: sqlite3.Connection) -> list:
     keys = ["folder_name", "created", "outcome", "match_status", "posting_title", "posting_org", "posting_source",
             "notified", "score", "evidence"]
     return [dict(zip(keys, r)) for r in conn_rows]
+
+
+def sync_team_fit_refs(conn: sqlite3.Connection, seeds: list, today_str: str) -> None:
+    """config.TEAM_FIT_SEEDS를 team_fit_refs에 넣는다(이미 있으면 제목·기관만 갱신)."""
+    conn.executemany(
+        "INSERT INTO team_fit_refs (id, title, org, added_date) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(id) DO UPDATE SET title = excluded.title, org = excluded.org",
+        [(s["id"], s["title"], s.get("org", ""), today_str) for s in seeds],
+    )
+    conn.commit()
+
+
+def get_team_fit_refs(conn: sqlite3.Connection) -> list:
+    """[{"id", "title", "org"}, ...]"""
+    rows = conn.execute("SELECT id, title, org FROM team_fit_refs ORDER BY added_date, id").fetchall()
+    return [{"id": i, "title": t, "org": o or ""} for i, t, o in rows]
+
+
+def get_all_titles(conn: sqlite3.Connection) -> list:
+    """최근 원본 공고명(raw_titles) + 저장된 관심 공고 제목 — team_fit의 단어 빈도 계산용."""
+    rows = conn.execute("SELECT title FROM raw_titles UNION SELECT title FROM postings").fetchall()
+    return [r[0] for r in rows]
 
 
 def get_proposal_orgs(conn: sqlite3.Connection) -> list:

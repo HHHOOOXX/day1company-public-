@@ -3,7 +3,7 @@
 import os
 import re
 import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -65,45 +65,6 @@ def format_money(raw) -> str:
     return f"{man:,}만원"
 
 
-def format_star_reminder(star_postings: list, today) -> str:
-    """이미 발송됐지만 마감이 안 지난, 예전에 함께 일한 기관의 공고를 매일 다시 안내하는 섹션.
-    star_postings: db.get_active_star_postings()가 반환하는 postings 테이블 row dict 리스트.
-    2026-09-22 피드백: "확실후보" 같은 내부 용어 없이, 팀원이 바로 이해할 수 있는 문구로 정리."""
-    if not star_postings:
-        return ""
-
-    def _row_deadline(row):
-        raw = (row.get("close_at") or "").strip()
-        if not raw or raw == "미정":
-            return None
-        last_part = raw.split("~")[-1].strip()
-        try:
-            return datetime.strptime(last_part[:10], "%Y-%m-%d").date()
-        except (ValueError, TypeError):
-            return None
-
-    rows = [r for r in star_postings if _row_deadline(r) is None or _row_deadline(r) >= today]
-    rows.sort(key=lambda r: (_row_deadline(r) is None, _row_deadline(r) or date.max))
-    if not rows:
-        return ""
-
-    lines = [f"*\U0001F4CC 예전에 함께 일한 기관에서 새 공고가 떴어요 ({len(rows)}건)*", ""]
-    for idx, row in enumerate(rows, 1):
-        org = row.get("org", "")
-        title = row.get("title", "")
-        url = row.get("url", "")
-        title_part = f"<{url}|{title}>" if url else title
-        d = _row_deadline(row)
-        if d is None:
-            dday_text = f"`{row.get('close_at') or '미정'}`"
-        else:
-            delta = (d - today).days
-            dday_text = f"{_urgency_emoji(delta)} `{d.month}/{d.day} (D-{delta})`" if delta > 0 else f"{_urgency_emoji(delta)} `{d.month}/{d.day} (D-day)`"
-        lines.append(f"`#{idx}` *[{org}]* {title_part} — 마감 {dday_text}")
-
-    return "\n".join(lines)
-
-
 def _pick_top(entries: list, today, top_n: int) -> list:
     """카드/요약 섹션에 올릴 상위 top_n건을 [(deadline, tag, label, item), ...]로 고른다.
     마감이 지난 건만 빼고, 마감일이 있는 건을 급한 순으로 앞에, 마감일이 비어 있거나 파싱 안 되는
@@ -134,7 +95,20 @@ def _rank_entries(entries: list, today) -> list:
             dated.append((d, tag, label, item))
     dated.sort(key=lambda x: x[0])
     ranked = dated + undated
-    return sorted(ranked, key=lambda x: (x[1] == PRESPEC_TAG, not x[3].get("_priority_review")))
+    # 2026-10-12 요청: 팀 맞춤 공고와 비슷한 공고(_team_fit)를 맨 앞에 둔다(사전규격이어도).
+    return sorted(
+        ranked, key=lambda x: (not x[3].get("_team_fit"), x[1] == PRESPEC_TAG, not x[3].get("_priority_review"))
+    )
+
+
+def _flag_tags(item: dict) -> str:
+    """카드/목록 줄 끝에 붙이는 표시. 팀 맞춤 공고와 비슷한 공고(team_fit.py)와 우선검토."""
+    tags = ""
+    if item.get("_team_fit"):
+        tags += "  `팀 맞춤 공고와 비슷`"
+    if item.get("_priority_review"):
+        tags += "  `우선검토`"
+    return tags
 
 
 def split_top(entries: list, today, top_n: int):
@@ -157,24 +131,28 @@ def format_overflow_text(sections: list, today) -> str:
             item_title = item.get("bidNtceNm", "")
             title_part = f"<{url}|{item_title}>" if url else item_title
             date_text = f"{d.month}/{d.day}" if d else "미정"
-            priority = "  `우선검토`" if item.get("_priority_review") else ""
             lines.append(
                 f"{idx}. *[{item.get('ntceInsttNm', '')}]* {title_part} — "
-                f"{item.get('_deadline_basis') or label} {date_text}  `{tag}`{priority}"
+                f"{item.get('_deadline_basis') or label} {date_text}  `{tag}`{_flag_tags(item)}"
             )
         parts.append("\n".join(lines))
     return "\n\n".join(parts)
 
 
-def format_urgent_digest(entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP") -> str:
+def format_urgent_digest(
+    entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP", note: str = None
+) -> str:
     """세 소스를 합쳐 마감이 가장 급한 순으로 top_n개만 뽑은 요약 섹션.
     entries: [(source_tag, label, item), ...] — 소스마다 마감 필드 라벨(마감/의견마감/신청)이 다르므로 같이 받는다.
     title: 섹션 헤더 전체 텍스트 — 확실포함용/확인필요 참고용 섹션이 같은 카드 포맷을 재사용하되
     성격이 다르다는 걸 구분하기 위해 호출부에서 지정한다(2026-09-22, 내부 용어 없이 사람이 바로
-    이해할 수 있는 문구로— "확인필요" 같은 태그는 더 이상 노출하지 않는다)."""
+    이해할 수 있는 문구로— "확인필요" 같은 태그는 더 이상 노출하지 않는다).
+    note: 헤더 바로 아래에 붙일 한 줄 설명(섹션 성격 안내용, 없으면 생략)."""
     top = _pick_top(entries, today, top_n)
 
     header = f"*{title} ({len(top)}건)*"
+    if note:
+        header = f"{header}\n_{note}_"
     if not top:
         return f"{header}\n마감 전인 공고가 없어 생략합니다."
 
@@ -185,8 +163,9 @@ def format_urgent_digest(entries: list, today, top_n: int = 8, title: str = "\U0
         url = item.get("bidNtceDtlUrl", "")
         title_part = f"<{url}|{item_title}>" if url else item_title
         date_text = f"{d.month}/{d.day}" if d else "미정"
-        priority = "  `우선검토`" if item.get("_priority_review") else ""
-        lines.append(f"{idx}. *[{org}]* {title_part} — {item.get('_deadline_basis') or label} {date_text}  `{tag}`{priority}")
+        lines.append(
+            f"{idx}. *[{org}]* {title_part} — {item.get('_deadline_basis') or label} {date_text}  `{tag}`{_flag_tags(item)}"
+        )
 
     return "\n".join(lines)
 
@@ -238,7 +217,9 @@ def _urgency_emoji(delta) -> str:
     return "\U0001F7E2"  # 🟢
 
 
-def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP") -> list:
+def format_urgent_blocks(
+    entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP", note: str = None
+) -> list:
     """마감임박 TOP N을 Block Kit 카드로 만든다. 카드당 2줄(제목줄 + 기관·예산·마감 메타줄)로 압축한
     한 줄형 레이아웃 — 카드당 4줄(제목+5필드+구분선)이던 이전 버전은 TOP5+TOP5만으로도 메시지가
     너무 길어진다는 2026-09-23 피드백에 따라 축소했다. 계약방법 필드는 뺐다(대시보드에서 확인 가능).
@@ -247,7 +228,8 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
     title: 섹션 헤더 전체 텍스트(format_urgent_digest와 동일한 이유로 파라미터화).
     2026-09-23 피드백: 카드마다 이모지가 너무 많아 눈이 피로하다 — 구분(📋/📐/🏢) 아이콘과 필드
     라벨용 장식 아이콘(🏢/💰/⏰)을 다 빼고, 실제로 판단에 쓰는 신호인 순위 메달(TOP3)과 마감
-    긴급도 신호등만 남겼다. 소스 구분은 어차피 label(마감/의견/신청)로도 드러난다."""
+    긴급도 신호등만 남겼다. 소스 구분은 어차피 label(마감/의견/신청)로도 드러난다.
+    note: 헤더 아래 작은 회색 글씨로 붙일 섹션 설명(없으면 생략)."""
     top = _pick_top(entries, today, top_n)
 
     blocks = [
@@ -256,6 +238,8 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
             "text": {"type": "plain_text", "text": f"{title} ({len(top)}건)", "emoji": True},
         }
     ]
+    if note:
+        blocks.append(context_section(note))
 
     if not top:
         blocks.append(mrkdwn_section("마감 전인 공고가 없어 생략합니다."))
@@ -289,8 +273,10 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
         budget_text = format_money(item.get("asignBdgtAmt", ""))
         meta_line = f"{org} · {budget_text} · {item.get('_deadline_basis') or label} {dday_text}"
         # 2026-10-06: 제외 키워드에 걸렸지만 교육·콘텐츠 신호가 강한 확인필요 건(classify.downgrade priority=True).
-        if item.get("_priority_review"):
-            title_line = f"{title_line}  `우선검토`"
+        title_line += _flag_tags(item)
+        # 2026-10-12: 어떤 팀 맞춤 공고와 비슷한지 보여줘서 실무자가 바로 판단할 수 있게 한다.
+        if item.get("_team_fit"):
+            meta_line += f"\n_비슷한 팀 맞춤 공고: {item['_team_fit']['ref']}_"
 
         blocks.append(
             {

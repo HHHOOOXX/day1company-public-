@@ -21,6 +21,7 @@
   slack-reply <텍스트> [메시지링크]    - 공고 알림 메시지의 스레드에 댓글 추가(링크가 없으면 오늘 보낸 알림을 채널에서 찾음)
   proposals                           - 제안 검토 이력(Drive [제안 및 검토] 폴더 ↔ 공고 연결) 현황
   proposals-sync                      - Drive 폴더를 지금 읽어 제안 이력만 갱신 (GOOGLE_SERVICE_ACCOUNT_JSON 필요)
+  team-fit                            - 팀 맞춤 공고(config.TEAM_FIT_SEEDS)에서 배운 단서 + 최근 공고 중 비슷한 공고 확인
   (인자 없음 / 카테고리만)             - 최근 입찰공고 미리보기
 """
 
@@ -34,10 +35,18 @@ import os
 
 from . import db
 from .proposals import print_report as print_proposal_report, sync_proposals
+from .team_fit import TeamFitModel
 from .agencies import AGENCY_UNSUPPORTED, fetch_all_agency_rows, get_daily_relevant_agency_notices, normalize_title
 from .alio import fetch_alio_org_names, fetch_alio_preview
 from .bizinfo import fetch_bizinfo_preview, get_daily_relevant_bizinfo
-from .classify import has_strong_fit, is_prior_proposal, set_learned_proposal_orgs, tag_business_area
+from .classify import (
+    has_strong_fit,
+    is_prior_proposal,
+    set_learned_proposal_orgs,
+    set_team_fit_model,
+    tag_business_area,
+    team_fit_match,
+)
 from .config import (
     BIZINFO_SERVICE_KEY,
     DASHBOARD_URL,
@@ -46,6 +55,7 @@ from .config import (
     SLACK_BOT_TOKEN,
     SLACK_CHANNEL_ID,
     SLACK_MENTION,
+    TEAM_FIT_SEEDS,
     is_kr_holiday,
 )
 from .g2b import (
@@ -65,7 +75,6 @@ from .slack import (
     parse_message_link,
     context_section,
     divider,
-    format_star_reminder,
     chunk_mrkdwn_blocks,
     format_overflow_text,
     format_urgent_blocks,
@@ -97,6 +106,7 @@ def _filter_unnotified(conn, source: str, items: list, today_str: str) -> list:
             "reasons": item.get("_reasons", []),
             "star": item.get("_star"),
             "industry_codes": sorted(item.get("_industry_codes") or []),
+            "team_fit": item.get("_team_fit"),
         }
         result = db.upsert_posting(
             conn,
@@ -140,6 +150,15 @@ def _fetch_alio_orgs() -> set:
 COLLECTION_TIME_LIMIT_SECONDS = 240
 # --from/--to 재조회(여러 날짜를 한 번에 봄)용 상한. GitHub Actions 작업 시간과 무관하게 넉넉히 둔다.
 BACKFILL_TIME_LIMIT_SECONDS = 900
+
+
+def _load_team_fit(conn) -> TeamFitModel:
+    """config.TEAM_FIT_SEEDS를 DB(team_fit_refs)에 넣고, DB의 팀 맞춤 공고 전체로 비슷한 공고 판정 모델을 만들어 classify에 건다."""
+    db.sync_team_fit_refs(conn, TEAM_FIT_SEEDS, datetime.now().date().isoformat())
+    model = TeamFitModel(db.get_team_fit_refs(conn), db.get_all_titles(conn))
+    set_team_fit_model(model)
+    print(f"[팀 맞춤] 기준 공고 {len(model.refs)}건으로 비슷한 공고를 추천 공고에 올립니다")
+    return model
 
 
 def _collect_agency_notices(conn, start_date, end_date, alio_orgs, other_items) -> list:
@@ -192,6 +211,8 @@ def run_daily_notification(
     conn = db.get_connection()
     # 2026-10-01: Drive 제안 검토 폴더와 짝지어진 공고의 발주기관을 '과거 제안 기관' 판정에 더한다(proposals.py).
     set_learned_proposal_orgs(db.get_proposal_orgs(conn))
+    # 2026-10-12 요청: 실무자가 고른 팀 맞춤 공고와 비슷한 공고를 추천 공고로 올린다(team_fit.py).
+    _load_team_fit(conn)
 
     if quiet_if_empty and db.has_sent_today(conn, today_str):
         # 오늘자 발송이 이미 성공적으로 끝난 뒤 지연 실행된 백업 워크플로우다. 이 실행이 API 일시
@@ -233,6 +254,7 @@ def run_daily_notification(
     pre_specs = []
     bizinfo_items = []
     agency_items = []
+    agency_entries = []
 
     if include_pre_spec:
         try:
@@ -266,13 +288,15 @@ def run_daily_notification(
         all_pairs += bizinfo_pairs
         urgent_entries += [("기업마당", "신청", item) for _, item in bizinfo_pairs]
 
-    # 2026-10-01: NIPA/NIA/IITP/과학창의재단/소진공/중진공/서울신보/창업진흥원 게시판(agencies.py). 나라장터
+    # 2026-10-01: NIPA/NIA/IITP/과학창의재단/소진공/중진공/창업진흥원 게시판(agencies.py). 나라장터
     # 대행 공고나 이미 다른 소스로 본 공고는 agencies 쪽에서 빼므로, 위 소스들을 다 모은 뒤에 돌린다.
     if include_agency:
         agency_items = _collect_agency_notices(conn, start_date, end_date, alio_orgs, bids + pre_specs + bizinfo_items)
         agency_pairs = _filter_unnotified(conn, "agency", agency_items, today_str)
         all_pairs += agency_pairs
-        urgent_entries += [("기관공고", "마감", item) for _, item in agency_pairs]
+        # 2026-10-12 요청: 나라장터에 없는 기관 홈페이지 공고가 입찰공고 카드에 섞여 있어 실무자가 "이건 어디서 확인하냐"고
+        # 매번 물었다 — 추천/확인필요 카드에 섞지 않고 별도 섹션으로 보낸다.
+        agency_entries = [("기관공고", "마감", item) for _, item in agency_pairs]
 
     # 2026-10-01: Drive "[제안 및 검토]" 폴더를 읽어 제안 이력을 갱신한다. 오늘 수집한 원본 공고명(raw_titles)까지
     # 저장된 뒤에 돌려야 "필터가 놓친 공고"를 잡을 수 있어서 수집이 다 끝난 이 자리에서 한다.
@@ -290,10 +314,8 @@ def run_daily_notification(
         warnings=list(COLLECTION_WARNINGS), path=dashboard_path, auto_open=False, agency_items=agency_items,
     )
 
-    # 이미 발송됐지만 마감이 안 지난 확실후보(⭐)는 마감일까지 매일 다시 안내한다 — 오늘 새로
-    # 발송할 게 없어도 이 섹션은 독립적으로 존재할 수 있다.
-    star_postings = db.get_active_star_postings(conn, today_str)
-    star_section = format_star_reminder(star_postings, today=datetime.now().date())
+    # 2026-10-12 요청: "예전에 함께 일한 기관에서 새 공고가 떴어요"(이미 발송한 ⭐확실후보를 마감일까지 매일 다시 안내하던
+    # 섹션)를 내리고, 그 자리에 기관 홈페이지 공고 섹션을 둔다. ⭐확실후보 판정(카드 승격·마감임박 예외)은 그대로다.
 
     # 2026-09-18 재설계: 메시지 한 번에 너무 많은 공고가 쏟아져서, 핵심(확인필요가 아닌) 공고만
     # 마감임박 상위 5건으로 추리고 나머지는 전부 대시보드로 넘긴다.
@@ -301,8 +323,9 @@ def run_daily_notification(
     # 섹션으로 항상 최대 5건씩 같이 보여준다 — AI가 새로 판단하는 게 아니라 기존 필터링 파이프라인이
     # 이미 계산해둔 확인필요 등급을 그대로 재사용하는 것뿐이라 추가 비용/의존성이 없다. 확실포함
     # 카드와 헤더 문구로 명확히 구분되므로 서로 혼동되지 않는다.
-    core_entries = [e for e in urgent_entries if e[2].get("_tier") != "review"]
-    review_entries = [e for e in urgent_entries if e[2].get("_tier") == "review"]
+    # 2026-10-12 요청: 팀 맞춤 공고와 비슷한 공고는 확인필요 사유가 있어도 추천 공고로 올린다(사유는 대시보드에 남는다).
+    core_entries = [e for e in urgent_entries if e[2].get("_tier") != "review" or e[2].get("_team_fit")]
+    review_entries = [e for e in urgent_entries if e[2].get("_tier") == "review" and not e[2].get("_team_fit")]
     # 2026-10-06 요청: 제외 키워드에 걸렸지만 교육·콘텐츠 신호가 강한 우선검토 건을 확인필요 섹션 맨 앞에 둔다.
     review_entries = _priority_first(review_entries)
 
@@ -349,9 +372,18 @@ def run_daily_notification(
     # 한 항상 노출된다(요청: "굳이 AI 연결하지 말고 기존 필터링 결과에서 3~5개 추려서 같이 보내자").
     core_title = "\U0001F4CB 오늘의 추천 공고"
     review_title = "\U0001F50D 이런 공고도 살펴보세요"
+    agency_title = "\U0001F3DB\uFE0F 기관 홈페이지에만 올라온 공고"
+    agency_note = (
+        "나라장터에는 없고 NIPA·NIA·IITP·중진공·소진공·과학창의재단·창업진흥원 홈페이지 게시판에서 직접 가져온 공고예요. "
+        "링크(기관 홈페이지)에서 내용 확인·신청하세요."
+    )
+    agency_top_n = 5
+    agency_entries, agency_rest = split_top(agency_entries, today, agency_top_n)
     # 2026-10-06 요청: 카드(상위 5~10건)에 못 넣은 공고를 버리지 않고 스레드 댓글(봇 토큰이 있을 때) 또는
     # 본문 맨 아래 목록(웹훅만 있을 때)으로 보낸다.
-    overflow_text = format_overflow_text([(core_title, core_rest), (review_title, review_rest)], today)
+    overflow_text = format_overflow_text(
+        [(core_title, core_rest), (review_title, review_rest), (agency_title, agency_rest)], today
+    )
     use_bot = bool(SLACK_BOT_TOKEN and SLACK_CHANNEL_ID)
 
     # text(폴백/콘솔 미리보기). 2026-09-23 피드백: 카드 다음에 바로 "확인했어요" 요약줄이 붙어
@@ -363,8 +395,10 @@ def run_daily_notification(
         message_parts.append(
             format_urgent_digest(review_entries, today=datetime.now().date(), top_n=review_top_n, title=review_title)
         )
-    if star_section:
-        message_parts.append(star_section)
+    if agency_entries:
+        message_parts.append(
+            format_urgent_digest(agency_entries, today=today, top_n=agency_top_n, title=agency_title, note=agency_note)
+        )
     if overflow_text and not use_bot:
         message_parts.append(overflow_text)
     if dashboard_text:
@@ -380,15 +414,15 @@ def run_daily_notification(
         warning_lines = "\n".join(f"- {w}" for w in COLLECTION_WARNINGS)
         print(f"[경고] 일부 데이터 수집 실패(슬랙에는 미포함):\n{warning_lines}")
 
-    if quiet_if_empty and not all_pairs and not star_postings:
-        print("[백업 실행] 새로 보낼 공고도, 확실후보 리마인드도 없어서 조용히 종료합니다.")
+    if quiet_if_empty and not all_pairs:
+        print("[백업 실행] 새로 보낼 공고가 없어서 조용히 종료합니다.")
         conn.close()
         return
 
     message = f"{SLACK_MENTION}\n" + message
 
-    # blocks(실제 Slack 레이아웃): 멘션 → 오늘의 추천 공고 → 이런 공고도 살펴보세요 →
-    # 예전 협업 기관 리마인더 → 대시보드 링크 → 요약 카운트. 전체 리스트 나열은 더 이상 채널에 뿌리지 않는다.
+    # blocks(실제 Slack 레이아웃): 멘션 → 오늘의 추천 공고 → 이런 공고도 살펴보세요 → 기관 홈페이지 공고 →
+    # 대시보드 링크 → 요약 카운트. 전체 리스트 나열은 더 이상 채널에 뿌리지 않는다.
     # 2026-09-23 피드백: 섹션들이 구분 없이 붙어 있어 카드가 서로 뒤섞여 보인다는 지적 — 섹션 사이에
     # 구분선(divider)을 넣고, 카드와 같은 굵기로 떠 있던 요약줄은 작은 회색 글씨(context)로 바꿔 맨
     # 아래로 뺐다(카드 내용과 헷갈리지 않게).
@@ -404,10 +438,12 @@ def run_daily_notification(
             format_urgent_blocks(review_entries, today=datetime.now().date(), top_n=review_top_n, title=review_title)
         )
         has_section = True
-    if star_section:
+    if agency_entries:
         if has_section:
             blocks.append(divider())
-        blocks.append(mrkdwn_section(star_section))
+        blocks.extend(
+            format_urgent_blocks(agency_entries, today=today, top_n=agency_top_n, title=agency_title, note=agency_note)
+        )
         has_section = True
     if overflow_text and not use_bot:
         if has_section:
@@ -616,6 +652,19 @@ def main():
             sync_proposals(report_conn, [])
         print_proposal_report(report_conn)
         report_conn.close()
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "team-fit":
+        fit_conn = db.get_connection()
+        model = _load_team_fit(fit_conn)
+        for title, concepts, words in model.describe():
+            print(f"\n[기준] {title}\n  주제: {', '.join(concepts) or '-'} / 단어: {', '.join(words) or '-'}")
+        print("\n===== 최근 공고 중 비슷한 공고 =====")
+        for source, title, org, _tier, _reasons, _notified in db.get_postings_for_rag(fit_conn):
+            fit = team_fit_match({"bidNtceNm": title})
+            if fit:
+                print(f"  [{source}] {title} ({org})\n    ← {fit[0]['title']} / 겹친 단서: {', '.join(fit[1])}")
+        fit_conn.close()
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "agency-discover":
