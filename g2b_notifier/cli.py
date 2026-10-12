@@ -21,6 +21,7 @@
   slack-reply <텍스트> [메시지링크]    - 공고 알림 메시지의 스레드에 댓글 추가(링크가 없으면 오늘 보낸 알림을 채널에서 찾음)
   proposals                           - 제안 검토 이력(Drive [제안 및 검토] 폴더 ↔ 공고 연결) 현황
   proposals-sync                      - Drive 폴더를 지금 읽어 제안 이력만 갱신 (GOOGLE_SERVICE_ACCOUNT_JSON 필요)
+  team-fit                            - 팀 맞춤 공고(config.TEAM_FIT_SEEDS)에서 배운 단서 + 최근 공고 중 비슷한 공고 확인
   (인자 없음 / 카테고리만)             - 최근 입찰공고 미리보기
 """
 
@@ -34,10 +35,18 @@ import os
 
 from . import db
 from .proposals import print_report as print_proposal_report, sync_proposals
+from .team_fit import TeamFitModel
 from .agencies import AGENCY_UNSUPPORTED, fetch_all_agency_rows, get_daily_relevant_agency_notices, normalize_title
 from .alio import fetch_alio_org_names, fetch_alio_preview
 from .bizinfo import fetch_bizinfo_preview, get_daily_relevant_bizinfo
-from .classify import has_strong_fit, is_prior_proposal, set_learned_proposal_orgs, tag_business_area
+from .classify import (
+    has_strong_fit,
+    is_prior_proposal,
+    set_learned_proposal_orgs,
+    set_team_fit_model,
+    tag_business_area,
+    team_fit_match,
+)
 from .config import (
     BIZINFO_SERVICE_KEY,
     DASHBOARD_URL,
@@ -46,6 +55,7 @@ from .config import (
     SLACK_BOT_TOKEN,
     SLACK_CHANNEL_ID,
     SLACK_MENTION,
+    TEAM_FIT_SEEDS,
     is_kr_holiday,
 )
 from .g2b import (
@@ -96,6 +106,7 @@ def _filter_unnotified(conn, source: str, items: list, today_str: str) -> list:
             "reasons": item.get("_reasons", []),
             "star": item.get("_star"),
             "industry_codes": sorted(item.get("_industry_codes") or []),
+            "team_fit": item.get("_team_fit"),
         }
         result = db.upsert_posting(
             conn,
@@ -139,6 +150,15 @@ def _fetch_alio_orgs() -> set:
 COLLECTION_TIME_LIMIT_SECONDS = 240
 # --from/--to 재조회(여러 날짜를 한 번에 봄)용 상한. GitHub Actions 작업 시간과 무관하게 넉넉히 둔다.
 BACKFILL_TIME_LIMIT_SECONDS = 900
+
+
+def _load_team_fit(conn) -> TeamFitModel:
+    """config.TEAM_FIT_SEEDS를 DB(team_fit_refs)에 넣고, DB의 팀 맞춤 공고 전체로 비슷한 공고 판정 모델을 만들어 classify에 건다."""
+    db.sync_team_fit_refs(conn, TEAM_FIT_SEEDS, datetime.now().date().isoformat())
+    model = TeamFitModel(db.get_team_fit_refs(conn), db.get_all_titles(conn))
+    set_team_fit_model(model)
+    print(f"[팀 맞춤] 기준 공고 {len(model.refs)}건으로 비슷한 공고를 추천 공고에 올립니다")
+    return model
 
 
 def _collect_agency_notices(conn, start_date, end_date, alio_orgs, other_items) -> list:
@@ -191,6 +211,8 @@ def run_daily_notification(
     conn = db.get_connection()
     # 2026-10-01: Drive 제안 검토 폴더와 짝지어진 공고의 발주기관을 '과거 제안 기관' 판정에 더한다(proposals.py).
     set_learned_proposal_orgs(db.get_proposal_orgs(conn))
+    # 2026-10-12 요청: 실무자가 고른 팀 맞춤 공고와 비슷한 공고를 추천 공고로 올린다(team_fit.py).
+    _load_team_fit(conn)
 
     if quiet_if_empty and db.has_sent_today(conn, today_str):
         # 오늘자 발송이 이미 성공적으로 끝난 뒤 지연 실행된 백업 워크플로우다. 이 실행이 API 일시
@@ -301,8 +323,9 @@ def run_daily_notification(
     # 섹션으로 항상 최대 5건씩 같이 보여준다 — AI가 새로 판단하는 게 아니라 기존 필터링 파이프라인이
     # 이미 계산해둔 확인필요 등급을 그대로 재사용하는 것뿐이라 추가 비용/의존성이 없다. 확실포함
     # 카드와 헤더 문구로 명확히 구분되므로 서로 혼동되지 않는다.
-    core_entries = [e for e in urgent_entries if e[2].get("_tier") != "review"]
-    review_entries = [e for e in urgent_entries if e[2].get("_tier") == "review"]
+    # 2026-10-12 요청: 팀 맞춤 공고와 비슷한 공고는 확인필요 사유가 있어도 추천 공고로 올린다(사유는 대시보드에 남는다).
+    core_entries = [e for e in urgent_entries if e[2].get("_tier") != "review" or e[2].get("_team_fit")]
+    review_entries = [e for e in urgent_entries if e[2].get("_tier") == "review" and not e[2].get("_team_fit")]
     # 2026-10-06 요청: 제외 키워드에 걸렸지만 교육·콘텐츠 신호가 강한 우선검토 건을 확인필요 섹션 맨 앞에 둔다.
     review_entries = _priority_first(review_entries)
 
@@ -629,6 +652,19 @@ def main():
             sync_proposals(report_conn, [])
         print_proposal_report(report_conn)
         report_conn.close()
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "team-fit":
+        fit_conn = db.get_connection()
+        model = _load_team_fit(fit_conn)
+        for title, concepts, words in model.describe():
+            print(f"\n[기준] {title}\n  주제: {', '.join(concepts) or '-'} / 단어: {', '.join(words) or '-'}")
+        print("\n===== 최근 공고 중 비슷한 공고 =====")
+        for source, title, org, _tier, _reasons, _notified in db.get_postings_for_rag(fit_conn):
+            fit = team_fit_match({"bidNtceNm": title})
+            if fit:
+                print(f"  [{source}] {title} ({org})\n    ← {fit[0]['title']} / 겹친 단서: {', '.join(fit[1])}")
+        fit_conn.close()
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "agency-discover":

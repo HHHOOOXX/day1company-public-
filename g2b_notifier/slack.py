@@ -95,7 +95,20 @@ def _rank_entries(entries: list, today) -> list:
             dated.append((d, tag, label, item))
     dated.sort(key=lambda x: x[0])
     ranked = dated + undated
-    return sorted(ranked, key=lambda x: (x[1] == PRESPEC_TAG, not x[3].get("_priority_review")))
+    # 2026-10-12 요청: 팀 맞춤 공고와 비슷한 공고(_team_fit)를 맨 앞에 둔다(사전규격이어도).
+    return sorted(
+        ranked, key=lambda x: (not x[3].get("_team_fit"), x[1] == PRESPEC_TAG, not x[3].get("_priority_review"))
+    )
+
+
+def _flag_tags(item: dict) -> str:
+    """카드/목록 줄 끝에 붙이는 표시. 팀 맞춤 공고와 비슷한 공고(team_fit.py)와 우선검토."""
+    tags = ""
+    if item.get("_team_fit"):
+        tags += "  `팀 맞춤 공고와 비슷`"
+    if item.get("_priority_review"):
+        tags += "  `우선검토`"
+    return tags
 
 
 def split_top(entries: list, today, top_n: int):
@@ -118,10 +131,9 @@ def format_overflow_text(sections: list, today) -> str:
             item_title = item.get("bidNtceNm", "")
             title_part = f"<{url}|{item_title}>" if url else item_title
             date_text = f"{d.month}/{d.day}" if d else "미정"
-            priority = "  `우선검토`" if item.get("_priority_review") else ""
             lines.append(
                 f"{idx}. *[{item.get('ntceInsttNm', '')}]* {title_part} — "
-                f"{item.get('_deadline_basis') or label} {date_text}  `{tag}`{priority}"
+                f"{item.get('_deadline_basis') or label} {date_text}  `{tag}`{_flag_tags(item)}"
             )
         parts.append("\n".join(lines))
     return "\n\n".join(parts)
@@ -151,8 +163,9 @@ def format_urgent_digest(
         url = item.get("bidNtceDtlUrl", "")
         title_part = f"<{url}|{item_title}>" if url else item_title
         date_text = f"{d.month}/{d.day}" if d else "미정"
-        priority = "  `우선검토`" if item.get("_priority_review") else ""
-        lines.append(f"{idx}. *[{org}]* {title_part} — {item.get('_deadline_basis') or label} {date_text}  `{tag}`{priority}")
+        lines.append(
+            f"{idx}. *[{org}]* {title_part} — {item.get('_deadline_basis') or label} {date_text}  `{tag}`{_flag_tags(item)}"
+        )
 
     return "\n".join(lines)
 
@@ -260,8 +273,10 @@ def format_urgent_blocks(
         budget_text = format_money(item.get("asignBdgtAmt", ""))
         meta_line = f"{org} · {budget_text} · {item.get('_deadline_basis') or label} {dday_text}"
         # 2026-10-06: 제외 키워드에 걸렸지만 교육·콘텐츠 신호가 강한 확인필요 건(classify.downgrade priority=True).
-        if item.get("_priority_review"):
-            title_line = f"{title_line}  `우선검토`"
+        title_line += _flag_tags(item)
+        # 2026-10-12: 어떤 팀 맞춤 공고와 비슷한지 보여줘서 실무자가 바로 판단할 수 있게 한다.
+        if item.get("_team_fit"):
+            meta_line += f"\n_비슷한 팀 맞춤 공고: {item['_team_fit']['ref']}_"
 
         blocks.append(
             {

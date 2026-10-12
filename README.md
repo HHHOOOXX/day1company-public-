@@ -19,6 +19,7 @@
 - 실제로 무관한 것으로 확인된 유형(축제 대행, 시스템 유지보수/감리, 해외연수, 홍보 대행 등)은 제외 키워드로 걸러냄
 - 확신도에 따라 **확실포함 / 확인필요(review)** 두 등급으로 분류해, 애매한 건도 놓치지 않고 "확인해볼 만한 공고"로 함께 노출
 - 과거 실제 수주 이력(`WIN_HISTORY`) 및 제안 검토 이력(`PROPOSAL_HISTORY`)과 발주기관이 겹치면 ⭐확실후보로 자동 승격
+- **팀 맞춤 공고 학습**: 실무자가 "우리 팀에 맞다"고 고른 공고(`TEAM_FIT_SEEDS`, DB `team_fit_refs`)의 주제(이러닝·온라인 강좌·창업교육·재직자 교육 등)를 배워, 비슷한 공고는 키워드·발주기관 필터를 못 넘어도 살리고 "오늘의 추천 공고" 맨 앞에 `팀 맞춤 공고와 비슷` 표시로 올림. `python test_g2b_api.py team-fit`으로 배운 단서와 최근 비슷한 공고 확인
 - ALIO(공공기관 경영정보 공개시스템) 공공기관 마스터 리스트를 화이트리스트로 연동해 발주기관 판별 정확도 보강
 
 ### 3. 참가 자격 자동 확인
@@ -115,6 +116,7 @@ DASHBOARD_URL=대시보드_공개_URL                # 선택, 설정 시 슬랙
 | `python test_g2b_api.py preview [카테고리]` | Slack 카드처럼 생긴 HTML을 로컬 브라우저로 미리보기 |
 | `python test_g2b_api.py notify [카테고리] [--dry-run] [--quiet-if-empty]` | 실제 Slack 발송 + DB 기록 |
 | `python test_g2b_api.py classify [카테고리] [일수]` | 필터링 키워드 튜닝을 위한 분류 교차 집계 |
+| `python test_g2b_api.py team-fit` | 팀 맞춤 공고에서 배운 단서와 최근 공고 중 비슷한 공고 확인 |
 
 ---
 
@@ -138,5 +140,6 @@ DASHBOARD_URL=대시보드_공개_URL                # 선택, 설정 시 슬랙
 
 - `EDU_KEYWORDS` / `ORG_KEYWORDS` / `EXCLUDE_KEYWORDS` — 관심 공고 판별 키워드
 - `WIN_HISTORY` / `PROPOSAL_HISTORY` — ⭐확실후보 판정에 쓰이는 자사 수주/제안 이력
+- `TEAM_FIT_SEEDS` / `TEAM_FIT_CONCEPTS` — 팀 맞춤 공고(나라장터 공고번호·제목·기관)와 비슷한 공고 판정에 쓰는 주제 묶음
 - `COMPANY_INDUSTRY_CODES` / `COMPANY_HQ_REGION` — 참가자격(업종/지역) 자동 판별 기준
 - `KR_HOLIDAYS_BY_YEAR` — 연도가 바뀔 때마다 갱신 필요

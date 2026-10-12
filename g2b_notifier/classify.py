@@ -154,9 +154,29 @@ def is_relevant_bid(item: dict, alio_orgs: set = None) -> bool:
         return False
     if item.get("pubPrcrmntLrgClsfcNm", "") in EXCLUDE_PROCUREMENT_CATEGORIES:
         return False
-    if is_prior_proposal(item)[0]:
+    if is_prior_proposal(item)[0] or team_fit_match(item):
         return True
     return _keyword_confidence(title) != "none" and _org_confidence(org, alio_orgs) != "none"
+
+
+# 2026-10-12: 실무자가 고른 팀 맞춤 공고(team_fit.py). 실행 시작 때 cli가 set_team_fit_model()로 채운다.
+_TEAM_FIT_MODEL = None
+
+
+def set_team_fit_model(model) -> None:
+    global _TEAM_FIT_MODEL
+    _TEAM_FIT_MODEL = model
+
+
+def team_fit_match(item: dict):
+    """팀 맞춤 공고와 주제가 비슷하면 (기준 공고, 겹친 단서), 아니면 None. 제목에 제외 키워드가 있는 공고는 비슷해도 None —
+    2026-10-12 확인: "체험관 공간 조성 및 교육콘텐츠 제작·설치"가 '교육콘텐츠'로 걸렸다(설치 공사가 본업)."""
+    if _TEAM_FIT_MODEL is None:
+        return None
+    title = item.get("bidNtceNm", "")
+    if title_exclude_hits(title):
+        return None
+    return _TEAM_FIT_MODEL.match(title)
 
 
 # 2026-10-01: Google Drive "[제안 및 검토]" 폴더와 짝지어진 공고의 발주기관(proposals.py가 DB에 기록).
@@ -243,6 +263,8 @@ def is_relevant_prespec(item: dict, learned_keywords: set, alio_orgs: set = None
     org = item.get("ntceInsttNm", "")
     if title_exclude_hits(title) and not has_strong_fit(title):
         return False
+    if team_fit_match(item):
+        return True
     if not learned_keywords:
         return False
     return _matches_any(title, learned_keywords) and _org_confidence(org, alio_orgs) == "core"
@@ -306,6 +328,8 @@ def attach_confidence(items: list, alio_orgs: set = None) -> list:
         hits = title_exclude_hits(item.get("bidNtceNm", ""))
         if hits:
             downgrade(item, f"제목에 제외 키워드 {hits}가 있지만 교육·콘텐츠 신호가 강함 — 우선 확인 필요", priority=True)
+        fit = team_fit_match(item)
+        item["_team_fit"] = {"ref": fit[0]["title"], "cues": fit[1]} if fit else None
     return items
 
 

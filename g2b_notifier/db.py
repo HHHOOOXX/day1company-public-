@@ -81,6 +81,15 @@ CREATE TABLE IF NOT EXISTS proposals (
     evidence TEXT,
     updated_date TEXT NOT NULL
 );
+
+-- 2026-10-12: 실무자가 "우리 팀에 맞는 공고"로 고른 공고(config.TEAM_FIT_SEEDS를 매일 실행 때 넣는다). team_fit.py가
+-- 이 공고들과 비슷한 공고를 추천 공고로 올린다.
+CREATE TABLE IF NOT EXISTS team_fit_refs (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    org TEXT,
+    added_date TEXT NOT NULL
+);
 """
 
 RAW_TITLE_RETENTION_DAYS = 60
@@ -300,6 +309,28 @@ def get_proposals(conn: sqlite3.Connection) -> list:
     keys = ["folder_name", "created", "outcome", "match_status", "posting_title", "posting_org", "posting_source",
             "notified", "score", "evidence"]
     return [dict(zip(keys, r)) for r in conn_rows]
+
+
+def sync_team_fit_refs(conn: sqlite3.Connection, seeds: list, today_str: str) -> None:
+    """config.TEAM_FIT_SEEDS를 team_fit_refs에 넣는다(이미 있으면 제목·기관만 갱신)."""
+    conn.executemany(
+        "INSERT INTO team_fit_refs (id, title, org, added_date) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(id) DO UPDATE SET title = excluded.title, org = excluded.org",
+        [(s["id"], s["title"], s.get("org", ""), today_str) for s in seeds],
+    )
+    conn.commit()
+
+
+def get_team_fit_refs(conn: sqlite3.Connection) -> list:
+    """[{"id", "title", "org"}, ...]"""
+    rows = conn.execute("SELECT id, title, org FROM team_fit_refs ORDER BY added_date, id").fetchall()
+    return [{"id": i, "title": t, "org": o or ""} for i, t, o in rows]
+
+
+def get_all_titles(conn: sqlite3.Connection) -> list:
+    """최근 원본 공고명(raw_titles) + 저장된 관심 공고 제목 — team_fit의 단어 빈도 계산용."""
+    rows = conn.execute("SELECT title FROM raw_titles UNION SELECT title FROM postings").fetchall()
+    return [r[0] for r in rows]
 
 
 def get_proposal_orgs(conn: sqlite3.Connection) -> list:
