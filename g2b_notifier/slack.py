@@ -166,15 +166,20 @@ def format_overflow_text(sections: list, today) -> str:
     return "\n\n".join(parts)
 
 
-def format_urgent_digest(entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP") -> str:
+def format_urgent_digest(
+    entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP", note: str = None
+) -> str:
     """세 소스를 합쳐 마감이 가장 급한 순으로 top_n개만 뽑은 요약 섹션.
     entries: [(source_tag, label, item), ...] — 소스마다 마감 필드 라벨(마감/의견마감/신청)이 다르므로 같이 받는다.
     title: 섹션 헤더 전체 텍스트 — 확실포함용/확인필요 참고용 섹션이 같은 카드 포맷을 재사용하되
     성격이 다르다는 걸 구분하기 위해 호출부에서 지정한다(2026-09-22, 내부 용어 없이 사람이 바로
-    이해할 수 있는 문구로— "확인필요" 같은 태그는 더 이상 노출하지 않는다)."""
+    이해할 수 있는 문구로— "확인필요" 같은 태그는 더 이상 노출하지 않는다).
+    note: 헤더 바로 아래에 붙일 한 줄 설명(섹션 성격 안내용, 없으면 생략)."""
     top = _pick_top(entries, today, top_n)
 
     header = f"*{title} ({len(top)}건)*"
+    if note:
+        header = f"{header}\n_{note}_"
     if not top:
         return f"{header}\n마감 전인 공고가 없어 생략합니다."
 
@@ -238,7 +243,9 @@ def _urgency_emoji(delta) -> str:
     return "\U0001F7E2"  # 🟢
 
 
-def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP") -> list:
+def format_urgent_blocks(
+    entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP", note: str = None
+) -> list:
     """마감임박 TOP N을 Block Kit 카드로 만든다. 카드당 2줄(제목줄 + 기관·예산·마감 메타줄)로 압축한
     한 줄형 레이아웃 — 카드당 4줄(제목+5필드+구분선)이던 이전 버전은 TOP5+TOP5만으로도 메시지가
     너무 길어진다는 2026-09-23 피드백에 따라 축소했다. 계약방법 필드는 뺐다(대시보드에서 확인 가능).
@@ -247,7 +254,8 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
     title: 섹션 헤더 전체 텍스트(format_urgent_digest와 동일한 이유로 파라미터화).
     2026-09-23 피드백: 카드마다 이모지가 너무 많아 눈이 피로하다 — 구분(📋/📐/🏢) 아이콘과 필드
     라벨용 장식 아이콘(🏢/💰/⏰)을 다 빼고, 실제로 판단에 쓰는 신호인 순위 메달(TOP3)과 마감
-    긴급도 신호등만 남겼다. 소스 구분은 어차피 label(마감/의견/신청)로도 드러난다."""
+    긴급도 신호등만 남겼다. 소스 구분은 어차피 label(마감/의견/신청)로도 드러난다.
+    note: 헤더 아래 작은 회색 글씨로 붙일 섹션 설명(없으면 생략)."""
     top = _pick_top(entries, today, top_n)
 
     blocks = [
@@ -256,6 +264,8 @@ def format_urgent_blocks(entries: list, today, top_n: int = 8, title: str = "\U0
             "text": {"type": "plain_text", "text": f"{title} ({len(top)}건)", "emoji": True},
         }
     ]
+    if note:
+        blocks.append(context_section(note))
 
     if not top:
         blocks.append(mrkdwn_section("마감 전인 공고가 없어 생략합니다."))

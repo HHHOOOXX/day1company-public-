@@ -1,6 +1,6 @@
 """주요 발주기관 홈페이지 게시판 공고 직접 수집 — 나라장터·기업마당에 없는 공고만.
 
-2026-10-01 요청: 나라장터 입찰공고·사전규격, 기업마당 외에 NIPA·NIA·IITP·중진공·소진공·서울신용보증재단·
+2026-10-01 요청: 나라장터 입찰공고·사전규격, 기업마당 외에 NIPA·NIA·IITP·중진공·소진공·
 과학창의재단·창업진흥원 홈페이지에만 올라오는 공고(수행기관 공모, 사업공고 등)를 가져온다. 공식 API가 없어
 각 기관 게시판 목록 페이지를 직접 파싱한다(사이트마다 구조가 달라 기관별 파서를 둔다).
 
@@ -49,7 +49,7 @@ from .classify import (
     is_relevant_bid,
     passes_deadline_gate,
 )
-from .config import KR_PROXY_URL, PRE_SPEC_BASE_URL, SERVICE_KEY
+from .config import PRE_SPEC_BASE_URL, SERVICE_KEY
 from .g2b import COLLECTION_WARNINGS, RAW_SOURCE_TITLES, _call_api, _deadline_exceeded, get_lookback_range
 from .slack import deadline_date
 from .rag_screen import screen_items
@@ -59,6 +59,8 @@ _TIMEOUT = 15
 
 AGENCY_UNSUPPORTED = {
     "창업진흥원 입찰공고": "로그인이 필요한 자체 전자입찰 시스템(ebid.kised.or.kr)이라 수집 불가",
+    # 2026-10-12 요청: 해외 IP를 막는지 GitHub Actions 러너에서 매번 접속 시간초과가 나서 수집 대상에서 뺐다.
+    "서울신보 사업공고": "GitHub Actions(해외 서버)에서 접속 시간초과가 반복돼 수집 제외",
 }
 
 
@@ -221,11 +223,6 @@ def _fetch_kosmes_notice(page: int = 1) -> list:
     return rows
 
 
-def _kr_proxies():
-    """국내 IP가 필요한 사이트(서울신보)용 프록시 설정. config.KR_PROXY_URL이 없으면 None(직접 접속)."""
-    return {"http": KR_PROXY_URL, "https": KR_PROXY_URL} if KR_PROXY_URL else None
-
-
 def _fetch_kosmes_bid(page: int = 1) -> list:
     """중진공 입찰정보(SHNTS005M0). AXGrid가 /sh/nts/notice03.json(POST)을 불러 그린다. 글별 상세페이지가 없고
     첨부파일만 있어 링크는 목록 페이지로 둔다(_no_detail_page — 목록 페이지 메뉴 텍스트를 본문으로 검사하지 않게).
@@ -245,25 +242,6 @@ def _fetch_kosmes_bid(page: int = 1) -> list:
                    list_url, posted, (x.get("BIDPRICE_TTIME") or "")[:10])
         row["_no_detail_page"] = True
         rows.append(row)
-    return rows
-
-
-def _fetch_seoulshinbo(page: int = 1) -> list:
-    """서울신용보증재단 사업공고(mng_cd=STRY0006). 상권지원 사업공고와 재무팀 자체 입찰공고
-    ("[제2026재무팀-66호]입찰공고(...용역)")가 한 게시판에 같이 올라온다. 서버 인증서 체인이 불완전해
-    인증서 검증을 끈다(공개 게시판 읽기만 하므로 위험 낮음). 상세는 bbs.goView(페이지, 글번호) ->
-    /wbase/contents/bbs/view/{글번호}.do (pageIndex 없이 열면 HTTP 500)."""
-    page_html = HTTP.get(f"https://www.seoulshinbo.co.kr/wbase/contents/bbs/list.do?mng_cd=STRY0006&pageIndex={page}",
-                    timeout=_TIMEOUT, verify=False, proxies=_kr_proxies()).text
-    rows = []
-    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", page_html, re.S):
-        m = re.search(r"bbs\.goView\('\d+',\s*'(\d+)'\)\"><span[^>]*>(.*?)</span>", tr, re.S)
-        if not m:
-            continue
-        posted = _dates(_text(tr))[0] if _dates(_text(tr)) else ""
-        rows.append(_row("서울신용보증재단", "seoulshinbo", m.group(1), m.group(2),
-                         f"https://www.seoulshinbo.co.kr/wbase/contents/bbs/view/{m.group(1)}.do"
-                         "?mng_cd=STRY0006&pageIndex=1", posted))
     return rows
 
 
@@ -356,7 +334,6 @@ AGENCY_SOURCES = [
     ("소진공 사업공고", _paged(_fetch_semas_biz)),
     ("중진공 공지사항", _paged(_fetch_kosmes_notice)),
     ("중진공 입찰정보", _paged(_fetch_kosmes_bid)),
-    ("서울신보 사업공고", _paged(_fetch_seoulshinbo)),
     ("창업진흥원 사업공고(K-Startup)", lambda: _fetch_kised(AGENCY_PAGES)),
 ]
 
@@ -497,6 +474,15 @@ def _is_vendor_call(item: dict) -> bool:
     return bool(_VENDOR_CALL_RE.search(item["bidNtceNm"]))
 
 
+# 2026-10-12 요청: "[사전규격공개]" 글은 입찰 전 규격 공개 단계라 기관 공모가 아니다 — 제목의 "위탁운영"이
+# _VENDOR_CALL_RE에 걸려도 우선검토·마감 7일 예외를 주지 않는다(실사례: NIA "[사전규격공개] 대구본원 구내식당 위탁운영").
+_PRE_SPEC_TITLE_RE = re.compile(r"사전\s*규격")
+
+
+def _is_priority_vendor_call(item: dict) -> bool:
+    return _is_vendor_call(item) and not _PRE_SPEC_TITLE_RE.search(item["bidNtceNm"])
+
+
 def _is_non_bid_notice(item: dict) -> bool:
     return not _is_vendor_call(item) and bool(_NON_BID_RE.search(item["bidNtceNm"]))
 
@@ -517,9 +503,8 @@ def fetch_detail_text(item: dict) -> str:
     상세페이지가 없는 게시판(_no_detail_page, 중진공 입찰정보)은 빈 문자열."""
     if item.get("_no_detail_page"):
         return ""
-    proxies = _kr_proxies() if "seoulshinbo.co.kr" in item["bidNtceDtlUrl"] else None
     try:
-        page = HTTP.get(item["bidNtceDtlUrl"], timeout=_TIMEOUT, verify=False, proxies=proxies).text
+        page = HTTP.get(item["bidNtceDtlUrl"], timeout=_TIMEOUT, verify=False).text
     except requests.exceptions.RequestException:
         return ""
     page = re.sub(r"<(script|style|noscript|head)[^>]*>.*?</\1>", " ", page, flags=re.S | re.I)
@@ -634,7 +619,7 @@ def get_daily_relevant_agency_notices(
     # 2026-10-06 요청: 수행기관·운영기관을 뽑는 기관 자체 공모(나라장터에 안 올라옴)는 무조건 챙겨야 하는 유형이라
     # (실사례: 과학창의재단 "모두의 AI 챌린지 프로그램 기획·운영 사업" — 실제 제안 참여) 우선검토로 카드 앞쪽에 둔다.
     for item in relevant:
-        if _is_vendor_call(item):
+        if _is_priority_vendor_call(item):
             downgrade(item, "기관 홈페이지에만 올라온 수행기관·운영기관 공모(나라장터 미게시) — 우선 확인 필요", priority=True)
 
     today = datetime.now().date()
@@ -646,7 +631,7 @@ def get_daily_relevant_agency_notices(
             continue
         d = deadline_date(item)
         # 2026-10-06 요청: 우리가 수행기관으로 들어가는 기관 공모는 접수기간이 짧아도 놓치면 안 된다.
-        if _is_vendor_call(item) and d is not None and d >= today:
+        if _is_priority_vendor_call(item) and d is not None and d >= today:
             downgrade(item, f"마감까지 {(d - today).days}일 — 7일 미만이지만 기관 공모라 놓치지 않게 포함")
             gated.append(item)
     relevant = gated

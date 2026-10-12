@@ -233,6 +233,7 @@ def run_daily_notification(
     pre_specs = []
     bizinfo_items = []
     agency_items = []
+    agency_entries = []
 
     if include_pre_spec:
         try:
@@ -266,13 +267,15 @@ def run_daily_notification(
         all_pairs += bizinfo_pairs
         urgent_entries += [("기업마당", "신청", item) for _, item in bizinfo_pairs]
 
-    # 2026-10-01: NIPA/NIA/IITP/과학창의재단/소진공/중진공/서울신보/창업진흥원 게시판(agencies.py). 나라장터
+    # 2026-10-01: NIPA/NIA/IITP/과학창의재단/소진공/중진공/창업진흥원 게시판(agencies.py). 나라장터
     # 대행 공고나 이미 다른 소스로 본 공고는 agencies 쪽에서 빼므로, 위 소스들을 다 모은 뒤에 돌린다.
     if include_agency:
         agency_items = _collect_agency_notices(conn, start_date, end_date, alio_orgs, bids + pre_specs + bizinfo_items)
         agency_pairs = _filter_unnotified(conn, "agency", agency_items, today_str)
         all_pairs += agency_pairs
-        urgent_entries += [("기관공고", "마감", item) for _, item in agency_pairs]
+        # 2026-10-12 요청: 나라장터에 없는 기관 홈페이지 공고가 입찰공고 카드에 섞여 있어 실무자가 "이건 어디서 확인하냐"고
+        # 매번 물었다 — 추천/확인필요 카드에 섞지 않고 별도 섹션으로 보낸다.
+        agency_entries = [("기관공고", "마감", item) for _, item in agency_pairs]
 
     # 2026-10-01: Drive "[제안 및 검토]" 폴더를 읽어 제안 이력을 갱신한다. 오늘 수집한 원본 공고명(raw_titles)까지
     # 저장된 뒤에 돌려야 "필터가 놓친 공고"를 잡을 수 있어서 수집이 다 끝난 이 자리에서 한다.
@@ -349,9 +352,18 @@ def run_daily_notification(
     # 한 항상 노출된다(요청: "굳이 AI 연결하지 말고 기존 필터링 결과에서 3~5개 추려서 같이 보내자").
     core_title = "\U0001F4CB 오늘의 추천 공고"
     review_title = "\U0001F50D 이런 공고도 살펴보세요"
+    agency_title = "\U0001F3DB\uFE0F 기관 홈페이지에만 올라온 공고"
+    agency_note = (
+        "나라장터에는 없고 NIPA·NIA·IITP·중진공·소진공·과학창의재단·창업진흥원 홈페이지 게시판에서 직접 가져온 공고예요. "
+        "링크(기관 홈페이지)에서 내용 확인·신청하세요."
+    )
+    agency_top_n = 5
+    agency_entries, agency_rest = split_top(agency_entries, today, agency_top_n)
     # 2026-10-06 요청: 카드(상위 5~10건)에 못 넣은 공고를 버리지 않고 스레드 댓글(봇 토큰이 있을 때) 또는
     # 본문 맨 아래 목록(웹훅만 있을 때)으로 보낸다.
-    overflow_text = format_overflow_text([(core_title, core_rest), (review_title, review_rest)], today)
+    overflow_text = format_overflow_text(
+        [(core_title, core_rest), (review_title, review_rest), (agency_title, agency_rest)], today
+    )
     use_bot = bool(SLACK_BOT_TOKEN and SLACK_CHANNEL_ID)
 
     # text(폴백/콘솔 미리보기). 2026-09-23 피드백: 카드 다음에 바로 "확인했어요" 요약줄이 붙어
@@ -362,6 +374,10 @@ def run_daily_notification(
     if review_entries:
         message_parts.append(
             format_urgent_digest(review_entries, today=datetime.now().date(), top_n=review_top_n, title=review_title)
+        )
+    if agency_entries:
+        message_parts.append(
+            format_urgent_digest(agency_entries, today=today, top_n=agency_top_n, title=agency_title, note=agency_note)
         )
     if star_section:
         message_parts.append(star_section)
@@ -387,7 +403,7 @@ def run_daily_notification(
 
     message = f"{SLACK_MENTION}\n" + message
 
-    # blocks(실제 Slack 레이아웃): 멘션 → 오늘의 추천 공고 → 이런 공고도 살펴보세요 →
+    # blocks(실제 Slack 레이아웃): 멘션 → 오늘의 추천 공고 → 이런 공고도 살펴보세요 → 기관 홈페이지 공고 →
     # 예전 협업 기관 리마인더 → 대시보드 링크 → 요약 카운트. 전체 리스트 나열은 더 이상 채널에 뿌리지 않는다.
     # 2026-09-23 피드백: 섹션들이 구분 없이 붙어 있어 카드가 서로 뒤섞여 보인다는 지적 — 섹션 사이에
     # 구분선(divider)을 넣고, 카드와 같은 굵기로 떠 있던 요약줄은 작은 회색 글씨(context)로 바꿔 맨
@@ -402,6 +418,13 @@ def run_daily_notification(
             blocks.append(divider())
         blocks.extend(
             format_urgent_blocks(review_entries, today=datetime.now().date(), top_n=review_top_n, title=review_title)
+        )
+        has_section = True
+    if agency_entries:
+        if has_section:
+            blocks.append(divider())
+        blocks.extend(
+            format_urgent_blocks(agency_entries, today=today, top_n=agency_top_n, title=agency_title, note=agency_note)
         )
         has_section = True
     if star_section:
