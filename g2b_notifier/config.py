@@ -63,7 +63,7 @@ SLACK_MENTION = os.getenv("SLACK_MENTION", "<!channel>").strip() or "<!channel>"
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "").strip()
 SLACK_CHANNEL_ID = os.getenv("SLACK_CHANNEL_ID", "").strip()
 
-# 2026-10-13: 공고 카드의 ✅ 우리 핏 / ❌ 아님 버튼(feedback.py). 클릭은 Google Apps Script 웹앱(apps_script/feedback.gs)이
+# 2026-10-13: 공고 카드의 ✅ 적합함 / ❌ 아님 버튼(feedback.py). 클릭은 Google Apps Script 웹앱(apps_script/feedback.gs)이
 # 받아 Google 시트에 쌓고, 매일 실행 때 FEEDBACK_EXPORT_TOKEN으로 가져온다. FEEDBACK_WEBAPP_URL이 없으면 버튼을 안 붙인다.
 # FEEDBACK_LINK_TOKEN이 있으면 Slack Interactivity 대신 버튼이 웹앱 주소를 브라우저로 여는 링크 방식이 된다.
 FEEDBACK_WEBAPP_URL = os.getenv("FEEDBACK_WEBAPP_URL", "").strip()

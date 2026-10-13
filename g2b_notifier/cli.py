@@ -22,7 +22,7 @@
   proposals                           - 제안 검토 이력(Drive [제안 및 검토] 폴더 ↔ 공고 연결) 현황
   proposals-sync                      - Drive 폴더를 지금 읽어 제안 이력만 갱신 (GOOGLE_SERVICE_ACCOUNT_JSON 필요)
   team-fit                            - 팀 맞춤 공고(config.TEAM_FIT_SEEDS)에서 배운 단서 + 최근 공고 중 비슷한 공고 확인
-  feedback                            - 카드 버튼(✅ 우리 핏 / ❌ 아님) 기록을 지금 가져와 DB에 반영하고 현황 출력
+  feedback                            - 카드 버튼(✅ 적합함 / ❌ 아님) 기록을 지금 가져와 DB에 반영하고 현황 출력
   (인자 없음 / 카테고리만)             - 최근 입찰공고 미리보기
 """
 
@@ -694,7 +694,7 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "feedback":
         fb_conn = db.get_connection()
         feedback.sync_feedback(fb_conn)
-        labels = {"fit": "✅ 우리 핏", "not_fit": "❌ 아님", "mixed": "엇갈림"}
+        labels = {"fit": "✅ 적합함", "not_fit": "❌ 아님", "mixed": "엇갈림"}
         rows = db.get_posting_feedback(fb_conn)
         print(f"\n===== 공고 피드백 {len(rows)}건 =====")
         for posting_id, label, fit, not_fit, title, org, updated in rows:

@@ -1,5 +1,5 @@
 /**
- * 공고 피드백 버튼(✅ 우리 핏 / ❌ 아님) 수신용 Google Apps Script 웹앱.
+ * 공고 피드백 버튼(✅ 적합함 / ❌ 아님) 수신용 Google Apps Script 웹앱.
  *
  * Slack 카드의 버튼을 누르면 Slack이 이 웹앱(doPost)으로 클릭 내용을 보내고, 이 스크립트가 연결된 Google 시트의
  * "feedback" 탭에 한 줄씩 기록한다. 매일 공고 알림을 보내는 GitHub Actions 실행이 doGet(action=export)으로 기록을 받아
@@ -18,7 +18,7 @@
  */
 
 var SHEET_NAME = 'feedback';
-var LABELS = { fit: '✅ 우리 핏', not_fit: '❌ 아님' };
+var LABELS = { fit: '✅ 적합함', not_fit: '❌ 아님' };
 
 var SETTINGS = {
   EXPORT_TOKEN: '',
@@ -40,8 +40,17 @@ function getSheet_() {
   return sheet;
 }
 
+// 여러 사람이 동시에 눌러도 기록이 빠지지 않게 한 번에 한 클릭씩 쓴다. appendRow는 한 줄 단위로는 원자적이지만,
+// feedback 탭이 아직 없을 때 동시에 들어온 첫 클릭들이 함께 탭을 만들려다 한쪽이 실패("이미 있는 이름")할 수 있다.
+// 잠금을 10초 안에 못 얻으면(동시 클릭이 몰린 경우) 잠금 없이 그대로 쓴다 — 탭이 이미 있으면 appendRow만으로 안전하다.
 function record_(postingId, label, userId, userName, title) {
-  getSheet_().appendRow([new Date().toISOString(), postingId, label, userId || '', userName || '', title || '']);
+  var lock = LockService.getScriptLock();
+  var locked = lock.tryLock(10000);
+  try {
+    getSheet_().appendRow([new Date().toISOString(), postingId, label, userId || '', userName || '', title || '']);
+  } finally {
+    if (locked) lock.releaseLock();
+  }
 }
 
 function json_(obj) {
@@ -70,7 +79,7 @@ function doPost(e) {
         payload: JSON.stringify({
           response_type: 'ephemeral',
           replace_original: false,
-          text: LABELS[action.action_id] + '(으)로 기록했어요: ' + (value.t || value.p),
+          text: LABELS[action.action_id] + '으로 기록했어요: ' + (value.t || value.p),
         }),
       });
     }
@@ -104,7 +113,7 @@ function doGet(e) {
     return HtmlService.createHtmlOutput(
       '<meta name="viewport" content="width=device-width,initial-scale=1">' +
       '<div style="font-family:sans-serif;padding:32px;font-size:18px">' + LABELS[p.l] +
-      '(으)로 기록했어요.<br><small style="color:#666">이 창은 닫아도 돼요.</small></div>'
+      '으로 기록했어요.<br><small style="color:#666">이 창은 닫아도 돼요.</small></div>'
     );
   }
   return ContentService.createTextOutput('ok');
