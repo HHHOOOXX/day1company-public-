@@ -125,18 +125,54 @@ def format_overflow_text(sections: list, today) -> str:
         if not entries:
             continue
         lines = [f"*{title} — 카드에 못 넣은 {len(entries)}건*"]
-        for idx, (tag, label, item) in enumerate(entries, 1):
-            d = deadline_date(item)
-            url = item.get("bidNtceDtlUrl", "")
-            item_title = item.get("bidNtceNm", "")
-            title_part = f"<{url}|{item_title}>" if url else item_title
-            date_text = f"{d.month}/{d.day}" if d else "미정"
-            lines.append(
-                f"{idx}. *[{item.get('ntceInsttNm', '')}]* {title_part} — "
-                f"{item.get('_deadline_basis') or label} {date_text}  `{tag}`{_flag_tags(item)}"
-            )
+        lines += [_overflow_line(idx, tag, label, item) for idx, (tag, label, item) in enumerate(entries, 1)]
         parts.append("\n".join(lines))
     return "\n\n".join(parts)
+
+
+def _overflow_line(idx: int, tag: str, label: str, item: dict) -> str:
+    d = deadline_date(item)
+    url = item.get("bidNtceDtlUrl", "")
+    item_title = item.get("bidNtceNm", "")
+    title_part = f"<{url}|{item_title}>" if url else item_title
+    date_text = f"{d.month}/{d.day}" if d else "미정"
+    return (
+        f"{idx}. *[{item.get('ntceInsttNm', '')}]* {title_part} — "
+        f"{item.get('_deadline_basis') or label} {date_text}  `{tag}`{_flag_tags(item)}"
+    )
+
+
+def format_overflow_messages(sections: list, after_item, max_blocks: int = 50) -> list:
+    """카드에 못 넣은 공고를 공고마다 섹션 + after_item 블록(피드백 버튼)으로 만들어 스레드 댓글 여러 개로 나눈다.
+    반환: [(폴백 텍스트, blocks), ...] — 메시지 하나당 블록 max_blocks개 이하.
+    2026-10-13 요청: 스레드 목록에도 공고마다 ✅/❌ 버튼. 공고 한 건이 블록 2개라 20건 남짓마다 댓글을 나눈다."""
+    messages, blocks, count = [], [], 0
+
+    def flush():
+        nonlocal blocks, count
+        if blocks:
+            messages.append((f"카드에 못 넣은 공고 {count}건", blocks))
+        blocks, count = [], 0
+
+    for title, entries in sections:
+        if not entries:
+            continue
+        first = True
+        for idx, (tag, label, item) in enumerate(entries, 1):
+            item_blocks = [mrkdwn_section(_overflow_line(idx, tag, label, item))]
+            extra = after_item(item)
+            if extra:
+                item_blocks.append(extra)
+            heading = f"*{title} — 카드에 못 넣은 {len(entries)}건*" if first else f"*{title} — 이어서*"
+            head = [mrkdwn_section(heading)] if first else []
+            if len(blocks) + len(head) + len(item_blocks) > max_blocks:
+                flush()
+                head = [mrkdwn_section(heading)]
+            blocks += head + item_blocks
+            count += 1
+            first = False
+    flush()
+    return messages
 
 
 def format_urgent_digest(
