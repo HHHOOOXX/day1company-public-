@@ -55,6 +55,10 @@ jobs:
           # 선택: 봇 토큰+채널 ID가 있으면 카드에 못 넣은 공고를 스레드 댓글로 단다(없으면 본문 맨 아래 목록).
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
+          # 선택: 공고 카드 피드백 버튼(✅ 우리 핏 / ❌ 아님). 설치는 apps_script/README.md.
+          FEEDBACK_WEBAPP_URL: ${{ secrets.FEEDBACK_WEBAPP_URL }}
+          FEEDBACK_EXPORT_TOKEN: ${{ secrets.FEEDBACK_EXPORT_TOKEN }}
+          FEEDBACK_LINK_TOKEN: ${{ secrets.FEEDBACK_LINK_TOKEN }}
           BIZINFO_SERVICE_KEY: ${{ secrets.BIZINFO_SERVICE_KEY }}
           ALIO_SERVICE_KEY: ${{ secrets.ALIO_SERVICE_KEY }}
           # Drive "[제안 및 검토]" 폴더 → 제안 이력 자동 기록(g2b_notifier/proposals.py). 서비스 계정 키 JSON 전체.

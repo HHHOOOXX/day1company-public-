@@ -63,6 +63,13 @@ SLACK_MENTION = os.getenv("SLACK_MENTION", "<!channel>").strip() or "<!channel>"
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "").strip()
 SLACK_CHANNEL_ID = os.getenv("SLACK_CHANNEL_ID", "").strip()
 
+# 2026-10-13: 공고 카드의 ✅ 우리 핏 / ❌ 아님 버튼(feedback.py). 클릭은 Google Apps Script 웹앱(apps_script/feedback.gs)이
+# 받아 Google 시트에 쌓고, 매일 실행 때 FEEDBACK_EXPORT_TOKEN으로 가져온다. FEEDBACK_WEBAPP_URL이 없으면 버튼을 안 붙인다.
+# FEEDBACK_LINK_TOKEN이 있으면 Slack Interactivity 대신 버튼이 웹앱 주소를 브라우저로 여는 링크 방식이 된다.
+FEEDBACK_WEBAPP_URL = os.getenv("FEEDBACK_WEBAPP_URL", "").strip()
+FEEDBACK_EXPORT_TOKEN = os.getenv("FEEDBACK_EXPORT_TOKEN", "").strip()
+FEEDBACK_LINK_TOKEN = os.getenv("FEEDBACK_LINK_TOKEN", "").strip()
+
 # 2026-09-23 피드백: 설/추석 등 공휴일·연휴엔 발주기관이 쉬어서 신규 공고가 거의 없고, 있어도
 # 팀원이 확인할 수 있는 날이 아니라서 슬랙 발송 자체를 건너뛴다("당장 내일 추석연휴", "10월에도
 # 평일에 공휴일 있음" — 개천절 대체공휴일 10/5, 한글날 10/9). "관공서의 공휴일에 관한 규정" 기준
