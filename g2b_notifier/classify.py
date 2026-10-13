@@ -7,7 +7,9 @@ from .config import (
     CENTRAL_GOV_ORGS,
     EDU_KEYWORDS,
     EXCLUDE_KEYWORDS,
+    EXCLUDE_KEYWORDS_UNLESS_FIT,
     EXCLUDE_PROCUREMENT_CATEGORIES,
+    FIT_OVERRIDE_KEYWORDS,
     ORG_KEYWORDS,
     ORG_KEYWORDS_BROAD,
     PROPOSAL_HISTORY,
@@ -97,8 +99,24 @@ def _keyword_confidence(title: str) -> str:
 
 
 def title_exclude_hits(title: str) -> list:
-    """제목에 걸린 제외 키워드(EXCLUDE_KEYWORDS) 목록."""
-    return _matched_keywords(title, EXCLUDE_KEYWORDS)
+    """제목에 걸린 제외 키워드 목록. EXCLUDE_KEYWORDS_UNLESS_FIT(2026-10-13)는 제목에 우리 핏 키워드
+    (FIT_OVERRIDE_KEYWORDS)가 같이 있으면 제외 키워드로 치지 않는다."""
+    return _matched_keywords(title, EXCLUDE_KEYWORDS) + _unfit_soft_exclude_hits(title)
+
+
+def _unfit_soft_exclude_hits(title: str) -> list:
+    if _matched_keywords(title, FIT_OVERRIDE_KEYWORDS):
+        return []
+    return _matched_keywords(title, EXCLUDE_KEYWORDS_UNLESS_FIT)
+
+
+def is_title_excluded(title: str) -> bool:
+    """제목만으로 관심 공고에서 뺄지. EXCLUDE_KEYWORDS는 교육·콘텐츠 신호가 강하면(has_strong_fit) 살리고(2026-10-06),
+    EXCLUDE_KEYWORDS_UNLESS_FIT는 FIT_OVERRIDE_KEYWORDS가 있을 때만 살린다(2026-10-13 — has_strong_fit로 살리면
+    기관명의 '창업'이나 '전략적 육성' 같은 말 때문에 시설물 관리·백신 생산 공고가 남았다)."""
+    if _unfit_soft_exclude_hits(title):
+        return True
+    return bool(_matched_keywords(title, EXCLUDE_KEYWORDS)) and not has_strong_fit(title)
 
 
 _NOT_FIT_SIGNALS = {"인공지능"}
@@ -150,7 +168,7 @@ def is_relevant_bid(item: dict, alio_orgs: set = None) -> bool:
     이런 건은 attach_confidence에서 우선검토 확인필요로 표시된다."""
     title = item.get("bidNtceNm", "")
     org = item.get("ntceInsttNm", "")
-    if title_exclude_hits(title) and not has_strong_fit(title):
+    if is_title_excluded(title):
         return False
     if item.get("pubPrcrmntLrgClsfcNm", "") in EXCLUDE_PROCUREMENT_CATEGORIES:
         return False
@@ -261,7 +279,7 @@ def is_relevant_prespec(item: dict, learned_keywords: set, alio_orgs: set = None
     업종/지역 API로 걸러낼 안전망이 없어서 애초에 더 엄격한 기준으로 들어오는 것 자체를 좁혀야 한다."""
     title = item.get("bidNtceNm", "")
     org = item.get("ntceInsttNm", "")
-    if title_exclude_hits(title) and not has_strong_fit(title):
+    if is_title_excluded(title):
         return False
     if team_fit_match(item):
         return True

@@ -274,9 +274,6 @@ def format_urgent_blocks(
         meta_line = f"{org} · {budget_text} · {item.get('_deadline_basis') or label} {dday_text}"
         # 2026-10-06: 제외 키워드에 걸렸지만 교육·콘텐츠 신호가 강한 확인필요 건(classify.downgrade priority=True).
         title_line += _flag_tags(item)
-        # 2026-10-12: 어떤 팀 맞춤 공고와 비슷한지 보여줘서 실무자가 바로 판단할 수 있게 한다.
-        if item.get("_team_fit"):
-            meta_line += f"\n_비슷한 팀 맞춤 공고: {item['_team_fit']['ref']}_"
 
         blocks.append(
             {
