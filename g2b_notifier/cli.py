@@ -79,6 +79,7 @@ from .slack import (
     context_section,
     divider,
     chunk_mrkdwn_blocks,
+    format_overflow_messages,
     format_overflow_text,
     format_urgent_blocks,
     format_urgent_digest,
@@ -387,9 +388,8 @@ def run_daily_notification(
     agency_entries, agency_rest = split_top(agency_entries, today, agency_top_n)
     # 2026-10-06 요청: 카드(상위 5~10건)에 못 넣은 공고를 버리지 않고 스레드 댓글(봇 토큰이 있을 때) 또는
     # 본문 맨 아래 목록(웹훅만 있을 때)으로 보낸다.
-    overflow_text = format_overflow_text(
-        [(core_title, core_rest), (review_title, review_rest), (agency_title, agency_rest)], today
-    )
+    overflow_sections = [(core_title, core_rest), (review_title, review_rest), (agency_title, agency_rest)]
+    overflow_text = format_overflow_text(overflow_sections, today)
     use_bot = bool(SLACK_BOT_TOKEN and SLACK_CHANNEL_ID)
 
     # text(폴백/콘솔 미리보기). 2026-09-23 피드백: 카드 다음에 바로 "확인했어요" 요약줄이 붙어
@@ -490,8 +490,17 @@ def run_daily_notification(
         sent = ts is not None
         if sent and overflow_text:
             # 스레드 댓글은 실패해도 본문 발송은 이미 끝났으므로 발송 기록은 남긴다(목록은 대시보드에도 있음).
-            if post_with_bot(overflow_text, blocks=chunk_mrkdwn_blocks(overflow_text), thread_ts=ts) is None:
-                print("[경고] 카드에 못 넣은 공고 스레드 댓글 발송 실패 — 대시보드에서 확인 가능")
+            # 2026-10-13: 피드백 버튼이 켜져 있으면 공고마다 버튼을 붙여 블록 50개 단위로 나눠 단다.
+            if feedback.enabled():
+                replies = format_overflow_messages(overflow_sections, feedback.actions_block)
+                print(f"[피드백] 스레드 공고 {sum(1 for _, b in replies for x in b if x.get('type') == 'actions')}건에도 "
+                      f"버튼을 붙여 댓글 {len(replies)}개로 보내요")
+            else:
+                replies = [(overflow_text, chunk_mrkdwn_blocks(overflow_text))]
+            for reply_text, reply_blocks in replies:
+                if post_with_bot(reply_text, blocks=reply_blocks, thread_ts=ts) is None:
+                    print("[경고] 카드에 못 넣은 공고 스레드 댓글 발송 실패 — 대시보드에서 확인 가능")
+                    break
         if not sent:
             # 2026-10-06: 봇 토큰이 틀렸거나 봇이 채널에 초대되지 않았으면(not_in_channel) 그날 메시지가 통째로 안 나가므로
             # 기존 웹훅으로 보낸다. 넘친 공고는 웹훅 방식대로 본문 맨 아래 목록으로 붙인다.
