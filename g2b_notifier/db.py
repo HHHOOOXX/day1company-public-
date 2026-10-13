@@ -94,6 +94,18 @@ CREATE TABLE IF NOT EXISTS team_fit_refs (
 
 RAW_TITLE_RETENTION_DAYS = 60
 
+# 2026-10-13: 공고 카드 버튼 피드백(feedback.py). 공고마다 사람별 마지막 클릭을 모아 라벨로 남긴다 — 나중에 통계 모델 학습 데이터.
+_FEEDBACK_SCHEMA = """
+CREATE TABLE IF NOT EXISTS posting_feedback (
+    posting_id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    fit_count INTEGER NOT NULL,
+    not_fit_count INTEGER NOT NULL,
+    users TEXT,
+    updated_date TEXT NOT NULL
+);
+"""
+
 
 def get_connection() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -105,6 +117,9 @@ def get_connection() -> sqlite3.Connection:
     # 같이 저장해둔다 — 이게 없으면 발주기관/제목/마감일 같은 뼈대 정보만 남고 판정 근거를 잃어버린다.
     _ensure_column(conn, "postings", "classification_json", "TEXT")
     _ensure_column(conn, "postings", "method", "TEXT")
+    conn.executescript(_FEEDBACK_SCHEMA)
+    # 팀 맞춤 공고 출처: config(TEAM_FIT_SEEDS) 또는 feedback(카드 ✅ 버튼, feedback.py).
+    _ensure_column(conn, "team_fit_refs", "source", "TEXT NOT NULL DEFAULT 'config'")
     conn.commit()
     return conn
 
@@ -318,6 +333,52 @@ def sync_team_fit_refs(conn: sqlite3.Connection, seeds: list, today_str: str) ->
         "ON CONFLICT(id) DO UPDATE SET title = excluded.title, org = excluded.org",
         [(s["id"], s["title"], s.get("org", ""), today_str) for s in seeds],
     )
+    conn.commit()
+
+
+def replace_posting_feedback(conn: sqlite3.Connection, rows: list, today_str: str) -> None:
+    """버튼 기록 전체로 다시 계산한 공고별 피드백으로 바꾼다. rows: [(posting_id, label, ✅ 수, ❌ 수, [사용자]), ...]
+    시트에 기록이 전부 남아 있어서 매번 전체를 다시 계산한다(값이 같으면 updated_date는 그대로 둔다)."""
+    existing = {r[0]: r[1:] for r in conn.execute(
+        "SELECT posting_id, label, fit_count, not_fit_count, users, updated_date FROM posting_feedback")}
+    keep = set()
+    for posting_id, label, fit, not_fit, users in rows:
+        keep.add(posting_id)
+        users_json = json.dumps(sorted(users), ensure_ascii=False)
+        old = existing.get(posting_id)
+        if old and old[:4] == (label, fit, not_fit, users_json):
+            continue
+        conn.execute(
+            "INSERT INTO posting_feedback (posting_id, label, fit_count, not_fit_count, users, updated_date) "
+            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(posting_id) DO UPDATE SET label = excluded.label, "
+            "fit_count = excluded.fit_count, not_fit_count = excluded.not_fit_count, users = excluded.users, "
+            "updated_date = excluded.updated_date",
+            (posting_id, label, fit, not_fit, users_json, today_str),
+        )
+    for posting_id in set(existing) - keep:
+        conn.execute("DELETE FROM posting_feedback WHERE posting_id = ?", (posting_id,))
+    conn.commit()
+
+
+def get_posting_feedback(conn: sqlite3.Connection) -> list:
+    """[(posting_id, label, fit_count, not_fit_count, 제목, 기관, updated_date), ...] 최근 갱신 순."""
+    return conn.execute(
+        "SELECT f.posting_id, f.label, f.fit_count, f.not_fit_count, COALESCE(p.title, ''), COALESCE(p.org, ''), "
+        "f.updated_date FROM posting_feedback f LEFT JOIN postings p ON p.id = f.posting_id ORDER BY f.updated_date DESC"
+    ).fetchall()
+
+
+def sync_feedback_team_fit_refs(conn: sqlite3.Connection, fit_ids: set, today_str: str) -> None:
+    """✅가 더 많은 공고를 팀 맞춤 공고(source='feedback')로 넣고, 더 이상 아닌 공고는 뺀다. config 출처는 건드리지 않는다."""
+    current = {r[0] for r in conn.execute("SELECT id FROM team_fit_refs WHERE source = 'feedback'")}
+    for posting_id in fit_ids - current:
+        conn.execute(
+            "INSERT INTO team_fit_refs (id, title, org, added_date, source) "
+            "SELECT id, title, org, ?, 'feedback' FROM postings WHERE id = ? ON CONFLICT(id) DO NOTHING",
+            (today_str, posting_id),
+        )
+    for posting_id in current - fit_ids:
+        conn.execute("DELETE FROM team_fit_refs WHERE id = ? AND source = 'feedback'", (posting_id,))
     conn.commit()
 
 

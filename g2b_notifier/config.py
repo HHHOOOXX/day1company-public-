@@ -63,6 +63,13 @@ SLACK_MENTION = os.getenv("SLACK_MENTION", "<!channel>").strip() or "<!channel>"
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "").strip()
 SLACK_CHANNEL_ID = os.getenv("SLACK_CHANNEL_ID", "").strip()
 
+# 2026-10-13: 공고 카드의 ✅ 우리 핏 / ❌ 아님 버튼(feedback.py). 클릭은 Google Apps Script 웹앱(apps_script/feedback.gs)이
+# 받아 Google 시트에 쌓고, 매일 실행 때 FEEDBACK_EXPORT_TOKEN으로 가져온다. FEEDBACK_WEBAPP_URL이 없으면 버튼을 안 붙인다.
+# FEEDBACK_LINK_TOKEN이 있으면 Slack Interactivity 대신 버튼이 웹앱 주소를 브라우저로 여는 링크 방식이 된다.
+FEEDBACK_WEBAPP_URL = os.getenv("FEEDBACK_WEBAPP_URL", "").strip()
+FEEDBACK_EXPORT_TOKEN = os.getenv("FEEDBACK_EXPORT_TOKEN", "").strip()
+FEEDBACK_LINK_TOKEN = os.getenv("FEEDBACK_LINK_TOKEN", "").strip()
+
 # 2026-09-23 피드백: 설/추석 등 공휴일·연휴엔 발주기관이 쉬어서 신규 공고가 거의 없고, 있어도
 # 팀원이 확인할 수 있는 날이 아니라서 슬랙 발송 자체를 건너뛴다("당장 내일 추석연휴", "10월에도
 # 평일에 공휴일 있음" — 개천절 대체공휴일 10/5, 한글날 10/9). "관공서의 공휴일에 관한 규정" 기준
@@ -199,6 +206,18 @@ EXCLUDE_KEYWORDS = [
     # 대구본원 구내식당 위탁운영" — 기관 게시판 공고엔 나라장터 업종 대분류(EXCLUDE_PROCUREMENT_CATEGORIES)가 없어 그걸로 못 거른다.
     "구내식당", "식당 위탁", "식당위탁", "급식", "매점",
 ]
+
+# 2026-10-13 요청: 우리 사업과 무관한 도메인이지만, 제목에 우리 핏 키워드가 같이 있으면 살리는 제외 키워드.
+# 10/13 발송분 실사례: "동물세포기반 백신 공공 CDMO … 수혜기업 모집", "한동대학교 글로벌생활관 신축 기획 용역",
+# "해운항만물류정보시스템 위탁운영", "가천대학교 학위복 제작 및 위탁운영", "서울창업허브 M+ 시설물 종합관리 위탁 용역",
+# "2027년 보건관리 위탁용역", "온라인 건강관리 프로그램 위탁 운영".
+# 제목에 FIT_OVERRIDE_KEYWORDS가 같이 있으면 제외하지 않는다(예: "물류 AI 인재양성 교육", "건축 분야 재직자 교육").
+# 기존 강한 신호(has_strong_fit)는 쓰지 않는다 — "서울창업허브 M+ 시설물 종합관리"는 기관명의 '창업', "동물세포기반 백신 …
+# 전략적 육성"은 '육성'으로 살아났다.
+EXCLUDE_KEYWORDS_UNLESS_FIT = [
+    "동물세포", "건축", "신축", "해운", "물류", "학위복", "시설물", "보건관리", "건강관리",
+]
+FIT_OVERRIDE_KEYWORDS = ["교육", "AI", "인공지능", "컨설팅", "양성", "콘텐츠"]
 
 # 첨부 공고문·제안요청서·기관 상세페이지 본문 검사용 제외 키워드. 제목용 EXCLUDE_KEYWORDS를 본문 전체에
 # 그대로 쓰면 공고문 상투 문구에 걸린다 — 2026-10-06 확인: 10/1 게시분 키워드 통과 54건 중 첨부 검사로 48건이

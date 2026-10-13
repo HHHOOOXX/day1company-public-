@@ -22,6 +22,7 @@
   proposals                           - 제안 검토 이력(Drive [제안 및 검토] 폴더 ↔ 공고 연결) 현황
   proposals-sync                      - Drive 폴더를 지금 읽어 제안 이력만 갱신 (GOOGLE_SERVICE_ACCOUNT_JSON 필요)
   team-fit                            - 팀 맞춤 공고(config.TEAM_FIT_SEEDS)에서 배운 단서 + 최근 공고 중 비슷한 공고 확인
+  feedback                            - 카드 버튼(✅ 우리 핏 / ❌ 아님) 기록을 지금 가져와 DB에 반영하고 현황 출력
   (인자 없음 / 카테고리만)             - 최근 입찰공고 미리보기
 """
 
@@ -35,6 +36,7 @@ import os
 
 from . import db
 from .proposals import print_report as print_proposal_report, sync_proposals
+from . import feedback
 from .team_fit import TeamFitModel
 from .agencies import AGENCY_UNSUPPORTED, fetch_all_agency_rows, get_daily_relevant_agency_notices, normalize_title
 from .alio import fetch_alio_org_names, fetch_alio_preview
@@ -56,6 +58,7 @@ from .config import (
     SLACK_CHANNEL_ID,
     SLACK_MENTION,
     TEAM_FIT_SEEDS,
+    FEEDBACK_LINK_TOKEN,
     is_kr_holiday,
 )
 from .g2b import (
@@ -100,6 +103,7 @@ def _filter_unnotified(conn, source: str, items: list, today_str: str) -> list:
     new_count = 0
     for item in items:
         posting_id = _posting_id(source, item)
+        item["_posting_id"] = posting_id  # 카드 피드백 버튼(feedback.actions_block)이 쓴다
         tags = tag_business_area(item.get("bidNtceNm", ""))
         classification = {
             "tier": item.get("_tier", "include"),
@@ -211,6 +215,8 @@ def run_daily_notification(
     conn = db.get_connection()
     # 2026-10-01: Drive 제안 검토 폴더와 짝지어진 공고의 발주기관을 '과거 제안 기관' 판정에 더한다(proposals.py).
     set_learned_proposal_orgs(db.get_proposal_orgs(conn))
+    # 2026-10-13: 어제까지 누른 카드 피드백 버튼(✅/❌)을 DB에 넣는다. ✅ 공고는 아래 팀 맞춤 판정에 바로 쓰인다(feedback.py).
+    feedback.sync_feedback(conn)
     # 2026-10-12 요청: 실무자가 고른 팀 맞춤 공고와 비슷한 공고를 추천 공고로 올린다(team_fit.py).
     _load_team_fit(conn)
 
@@ -429,21 +435,25 @@ def run_daily_notification(
     blocks = [mrkdwn_section(SLACK_MENTION)]
     has_section = False
     if core_entries:
-        blocks.extend(format_urgent_blocks(core_entries, today=datetime.now().date(), top_n=5, title=core_title))
+        blocks.extend(format_urgent_blocks(
+            core_entries, today=datetime.now().date(), top_n=5, title=core_title, after_card=feedback.actions_block
+        ))
         has_section = True
     if review_entries:
         if has_section:
             blocks.append(divider())
-        blocks.extend(
-            format_urgent_blocks(review_entries, today=datetime.now().date(), top_n=review_top_n, title=review_title)
-        )
+        blocks.extend(format_urgent_blocks(
+            review_entries, today=datetime.now().date(), top_n=review_top_n, title=review_title,
+            after_card=feedback.actions_block,
+        ))
         has_section = True
     if agency_entries:
         if has_section:
             blocks.append(divider())
-        blocks.extend(
-            format_urgent_blocks(agency_entries, today=today, top_n=agency_top_n, title=agency_title, note=agency_note)
-        )
+        blocks.extend(format_urgent_blocks(
+            agency_entries, today=today, top_n=agency_top_n, title=agency_title, note=agency_note,
+            after_card=feedback.actions_block,
+        ))
         has_section = True
     if overflow_text and not use_bot:
         if has_section:
@@ -458,6 +468,10 @@ def run_daily_notification(
     if has_section:
         blocks.append(divider())
     blocks.append(context_section(summary_text))
+    blocks = _fit_block_limit(blocks)
+    if feedback.enabled():
+        button_rows = sum(1 for b in blocks if b.get("block_id", "").startswith("fb:"))
+        print(f"[피드백] 카드 {button_rows}건에 ✅/❌ 버튼을 붙였어요" + (" (링크 방식)" if FEEDBACK_LINK_TOKEN else ""))
 
     print("\n----- 발송할 메시지 미리보기 -----")
     print(message)
@@ -493,6 +507,20 @@ def run_daily_notification(
         db.mark_sent_today(conn, today_str)
 
     conn.close()
+
+
+SLACK_MAX_BLOCKS = 50
+
+
+def _fit_block_limit(blocks: list) -> list:
+    """Slack 메시지는 블록 50개까지라, 넘치면 피드백 버튼 줄을 뒤에서부터 뺀다(카드 15건 + 버튼이면 보통 40개 안팎)."""
+    over = len(blocks) - SLACK_MAX_BLOCKS
+    if over <= 0:
+        return blocks
+    button_rows = [i for i, b in enumerate(blocks) if b.get("block_id", "").startswith("fb:")]
+    drop = set(button_rows[-over:])
+    print(f"[슬랙] 블록이 {SLACK_MAX_BLOCKS}개를 넘어 피드백 버튼 {len(drop)}줄을 뺐어요")
+    return [b for i, b in enumerate(blocks) if i not in drop]
 
 
 def _priority_first(entries: list) -> list:
@@ -652,6 +680,17 @@ def main():
             sync_proposals(report_conn, [])
         print_proposal_report(report_conn)
         report_conn.close()
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "feedback":
+        fb_conn = db.get_connection()
+        feedback.sync_feedback(fb_conn)
+        labels = {"fit": "✅ 우리 핏", "not_fit": "❌ 아님", "mixed": "엇갈림"}
+        rows = db.get_posting_feedback(fb_conn)
+        print(f"\n===== 공고 피드백 {len(rows)}건 =====")
+        for posting_id, label, fit, not_fit, title, org, updated in rows:
+            print(f"  {labels.get(label, label)} (✅{fit}/❌{not_fit}, {updated}) [{org}] {title or posting_id}")
+        fb_conn.close()
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "team-fit":

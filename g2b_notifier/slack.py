@@ -218,7 +218,7 @@ def _urgency_emoji(delta) -> str:
 
 
 def format_urgent_blocks(
-    entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP", note: str = None
+    entries: list, today, top_n: int = 8, title: str = "\U0001F525 마감임박 TOP", note: str = None, after_card=None,
 ) -> list:
     """마감임박 TOP N을 Block Kit 카드로 만든다. 카드당 2줄(제목줄 + 기관·예산·마감 메타줄)로 압축한
     한 줄형 레이아웃 — 카드당 4줄(제목+5필드+구분선)이던 이전 버전은 TOP5+TOP5만으로도 메시지가
@@ -229,7 +229,8 @@ def format_urgent_blocks(
     2026-09-23 피드백: 카드마다 이모지가 너무 많아 눈이 피로하다 — 구분(📋/📐/🏢) 아이콘과 필드
     라벨용 장식 아이콘(🏢/💰/⏰)을 다 빼고, 실제로 판단에 쓰는 신호인 순위 메달(TOP3)과 마감
     긴급도 신호등만 남겼다. 소스 구분은 어차피 label(마감/의견/신청)로도 드러난다.
-    note: 헤더 아래 작은 회색 글씨로 붙일 섹션 설명(없으면 생략)."""
+    note: 헤더 아래 작은 회색 글씨로 붙일 섹션 설명(없으면 생략).
+    after_card: item → 카드 바로 아래에 붙일 블록(또는 None). 피드백 버튼(feedback.actions_block)용."""
     top = _pick_top(entries, today, top_n)
 
     blocks = [
@@ -274,9 +275,6 @@ def format_urgent_blocks(
         meta_line = f"{org} · {budget_text} · {item.get('_deadline_basis') or label} {dday_text}"
         # 2026-10-06: 제외 키워드에 걸렸지만 교육·콘텐츠 신호가 강한 확인필요 건(classify.downgrade priority=True).
         title_line += _flag_tags(item)
-        # 2026-10-12: 어떤 팀 맞춤 공고와 비슷한지 보여줘서 실무자가 바로 판단할 수 있게 한다.
-        if item.get("_team_fit"):
-            meta_line += f"\n_비슷한 팀 맞춤 공고: {item['_team_fit']['ref']}_"
 
         blocks.append(
             {
@@ -284,6 +282,9 @@ def format_urgent_blocks(
                 "text": {"type": "mrkdwn", "text": f"{title_line}\n{meta_line}"},
             }
         )
+        extra = after_card(item) if after_card else None
+        if extra:
+            blocks.append(extra)
 
     return blocks
 

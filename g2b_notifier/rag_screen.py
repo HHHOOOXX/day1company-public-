@@ -22,8 +22,7 @@ import re
 from collections import Counter
 
 from .bizinfo import is_region_restricted_by_attachment
-from .classify import downgrade, downgrade_for_doc_exclude
-from .config import EXCLUDE_KEYWORDS
+from .classify import downgrade, downgrade_for_doc_exclude, title_exclude_hits
 from .doc_extract import certificate_requirement, matches_exclude_keyword
 
 TOP_K_EXAMPLES = 5
@@ -69,10 +68,6 @@ class TitleSimilarity:
         return self._weight(a & b) / union if union else 0.0
 
 
-def _exclude_hits(title: str) -> list:
-    return [kw for kw in EXCLUDE_KEYWORDS if kw.upper() in (title or "").upper()]
-
-
 class ExampleIndex:
     """과거 처리 사례 검색용 인덱스(유사도는 TitleSimilarity). 하루 후보가 몇 건뿐이라 전수 비교(수천 건 x
     수 건)로 충분하다."""
@@ -89,7 +84,7 @@ class ExampleIndex:
         rejected = []
         for _norm, title, source in raw_titles:
             grams = bigrams(title)
-            hits = _exclude_hits(title)
+            hits = title_exclude_hits(title)
             if grams in passed_grams or not hits:
                 continue
             rejected.append((grams, f"[{_SOURCE_LABEL.get(source, source)}] {title} — 제외 키워드 {hits}로 제외"))

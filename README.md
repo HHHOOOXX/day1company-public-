@@ -20,6 +20,7 @@
 - 확신도에 따라 **확실포함 / 확인필요(review)** 두 등급으로 분류해, 애매한 건도 놓치지 않고 "확인해볼 만한 공고"로 함께 노출
 - 과거 실제 수주 이력(`WIN_HISTORY`) 및 제안 검토 이력(`PROPOSAL_HISTORY`)과 발주기관이 겹치면 ⭐확실후보로 자동 승격
 - **팀 맞춤 공고 학습**: 실무자가 "우리 팀에 맞다"고 고른 공고(`TEAM_FIT_SEEDS`, DB `team_fit_refs`)의 주제(이러닝·온라인 강좌·창업교육·재직자 교육 등)를 배워, 비슷한 공고는 키워드·발주기관 필터를 못 넘어도 살리고 "오늘의 추천 공고" 맨 앞에 `팀 맞춤 공고와 비슷` 표시로 올림. `python test_g2b_api.py team-fit`으로 배운 단서와 최근 비슷한 공고 확인
+- **공고 피드백 버튼**: 추천·확인필요·기관공고 카드마다 `✅ 우리 핏` / `❌ 아님` 버튼. 클릭은 Google Apps Script 웹앱이 시트에 쌓고, 매일 실행 때 DB(`posting_feedback`)로 가져와 ✅ 공고는 팀 맞춤 공고로 바로 반영(통계 학습용 데이터). 설치: [`apps_script/README.md`](apps_script/README.md)
 - ALIO(공공기관 경영정보 공개시스템) 공공기관 마스터 리스트를 화이트리스트로 연동해 발주기관 판별 정확도 보강
 
 ### 3. 참가 자격 자동 확인
@@ -116,6 +117,7 @@ DASHBOARD_URL=대시보드_공개_URL                # 선택, 설정 시 슬랙
 | `python test_g2b_api.py preview [카테고리]` | Slack 카드처럼 생긴 HTML을 로컬 브라우저로 미리보기 |
 | `python test_g2b_api.py notify [카테고리] [--dry-run] [--quiet-if-empty]` | 실제 Slack 발송 + DB 기록 |
 | `python test_g2b_api.py classify [카테고리] [일수]` | 필터링 키워드 튜닝을 위한 분류 교차 집계 |
+| `python test_g2b_api.py feedback` | 카드 버튼 기록을 지금 가져와 DB에 반영하고 현황 출력 |
 | `python test_g2b_api.py team-fit` | 팀 맞춤 공고에서 배운 단서와 최근 공고 중 비슷한 공고 확인 |
 
 ---
@@ -129,6 +131,7 @@ DASHBOARD_URL=대시보드_공개_URL                # 선택, 설정 시 슬랙
 - `BIZINFO_SERVICE_KEY` (선택)
 - `ALIO_SERVICE_KEY` (선택)
 - `DASHBOARD_URL` (선택)
+- `FEEDBACK_WEBAPP_URL` / `FEEDBACK_EXPORT_TOKEN` (선택, 카드 피드백 버튼 — `apps_script/README.md`)
 
 `notify-backup.yml`은 정시 실행이 GitHub Actions 스케줄 지연 등으로 놓쳤을 때만 대신 발송하는 백업 워크플로우로, 별도 설정 없이 같은 시크릿을 공유합니다.
 
