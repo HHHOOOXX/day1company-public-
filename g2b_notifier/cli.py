@@ -58,6 +58,7 @@ from .config import (
     SLACK_CHANNEL_ID,
     SLACK_MENTION,
     TEAM_FIT_SEEDS,
+    FEEDBACK_LINK_TOKEN,
     is_kr_holiday,
 )
 from .g2b import (
@@ -468,6 +469,9 @@ def run_daily_notification(
         blocks.append(divider())
     blocks.append(context_section(summary_text))
     blocks = _fit_block_limit(blocks)
+    if feedback.enabled():
+        button_rows = sum(1 for b in blocks if b.get("block_id", "").startswith("fb:"))
+        print(f"[피드백] 카드 {button_rows}건에 ✅/❌ 버튼을 붙였어요" + (" (링크 방식)" if FEEDBACK_LINK_TOKEN else ""))
 
     print("\n----- 발송할 메시지 미리보기 -----")
     print(message)
