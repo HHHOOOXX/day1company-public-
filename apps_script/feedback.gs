@@ -5,7 +5,8 @@
  * "feedback" 탭에 한 줄씩 기록한다. 매일 공고 알림을 보내는 GitHub Actions 실행이 doGet(action=export)으로 기록을 받아
  * DB(data/notifier.db posting_feedback)에 넣는다(g2b_notifier/feedback.py). 설치 방법은 apps_script/README.md.
  *
- * 스크립트 속성(프로젝트 설정 → 스크립트 속성):
+ * 설정값: 아래 SETTINGS에 직접 채우거나, 스크립트 속성(프로젝트 설정 → 스크립트 속성)에 같은 이름으로 넣는다(속성이 우선).
+ * 저장소에 올라가는 이 파일의 SETTINGS는 비워 둔다 — 공개 저장소라 토큰을 커밋하면 안 된다.
  *   EXPORT_TOKEN              필수. GitHub 시크릿 FEEDBACK_EXPORT_TOKEN과 같은 값(기록 내보내기 보호용).
  *   SLACK_VERIFICATION_TOKEN  권장. Slack 앱 Basic Information → Verification Token. 다른 곳에서 보낸 가짜 클릭을 거른다
  *                             (Apps Script는 요청 헤더를 못 읽어서 서명 검증 대신 이 토큰을 쓴다).
@@ -18,6 +19,16 @@
 
 var SHEET_NAME = 'feedback';
 var LABELS = { fit: '✅ 우리 핏', not_fit: '❌ 아님' };
+
+var SETTINGS = {
+  EXPORT_TOKEN: '',
+  SLACK_VERIFICATION_TOKEN: '',
+  LINK_TOKEN: '',
+};
+
+function setting_(key) {
+  return PropertiesService.getScriptProperties().getProperty(key) || SETTINGS[key] || '';
+}
 
 function getSheet_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -39,9 +50,8 @@ function json_(obj) {
 
 // Slack Interactivity 요청: application/x-www-form-urlencoded, payload=<JSON>
 function doPost(e) {
-  var props = PropertiesService.getScriptProperties();
   var payload = JSON.parse((e && e.parameter && e.parameter.payload) || '{}');
-  var expected = props.getProperty('SLACK_VERIFICATION_TOKEN');
+  var expected = setting_('SLACK_VERIFICATION_TOKEN');
   if (expected && payload.token !== expected) {
     return ContentService.createTextOutput('');
   }
@@ -70,11 +80,10 @@ function doPost(e) {
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
-  var props = PropertiesService.getScriptProperties();
 
   // GitHub Actions가 기록을 가져갈 때: ?action=export&token=...
   if (p.action === 'export') {
-    if (!p.token || p.token !== props.getProperty('EXPORT_TOKEN')) {
+    if (!p.token || p.token !== setting_('EXPORT_TOKEN')) {
       return json_({ ok: false, error: 'unauthorized' });
     }
     var values = getSheet_().getDataRange().getValues().slice(1);
@@ -89,7 +98,7 @@ function doGet(e) {
   }
 
   // 링크 방식 버튼: ?p=<posting_id>&l=fit|not_fit&k=<LINK_TOKEN>&t=<제목>
-  var linkToken = props.getProperty('LINK_TOKEN');
+  var linkToken = setting_('LINK_TOKEN');
   if (p.p && LABELS[p.l] && linkToken && p.k === linkToken) {
     record_(p.p, p.l, 'link', '', p.t);
     return HtmlService.createHtmlOutput(
