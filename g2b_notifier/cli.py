@@ -22,6 +22,7 @@
   proposals                           - 제안 검토 이력(Drive [제안 및 검토] 폴더 ↔ 공고 연결) 현황
   proposals-sync                      - Drive 폴더를 지금 읽어 제안 이력만 갱신 (GOOGLE_SERVICE_ACCOUNT_JSON 필요)
   team-fit                            - 팀 맞춤 공고(config.TEAM_FIT_SEEDS)에서 배운 단서 + 최근 공고 중 비슷한 공고 확인
+  feedback [--collect]                - Slack ✅/❌ 반응으로 모인 공고 피드백 현황(--collect: 지금 반응을 다시 읽어 반영)
   (인자 없음 / 카테고리만)             - 최근 입찰공고 미리보기
 """
 
@@ -35,6 +36,7 @@ import os
 
 from . import db
 from .proposals import print_report as print_proposal_report, sync_proposals
+from .feedback import collect_feedback, post_feedback_items
 from .team_fit import TeamFitModel
 from .agencies import AGENCY_UNSUPPORTED, fetch_all_agency_rows, get_daily_relevant_agency_notices, normalize_title
 from .alio import fetch_alio_org_names, fetch_alio_preview
@@ -472,12 +474,24 @@ def run_daily_notification(
 
     sent = False
     if use_bot:
-        ts = post_with_bot(message, blocks=blocks)
+        ts, posted_channel = post_with_bot(message, blocks=blocks, want_channel=True)
         sent = ts is not None
         if sent and overflow_text:
             # 스레드 댓글은 실패해도 본문 발송은 이미 끝났으므로 발송 기록은 남긴다(목록은 대시보드에도 있음).
             if post_with_bot(overflow_text, blocks=chunk_mrkdwn_blocks(overflow_text), thread_ts=ts) is None:
                 print("[경고] 카드에 못 넣은 공고 스레드 댓글 발송 실패 — 대시보드에서 확인 가능")
+        if sent:
+            # 2026-10-13: 카드에 올린 공고마다 스레드 댓글을 달아 ✅/❌ 반응을 받는다(feedback.py).
+            posting_ids = {id(item): pid for pid, item in all_pairs}
+            card_items = [
+                (posting_ids[id(item)], item)
+                for _tag, _label, item in core_entries + review_entries + agency_entries
+                if id(item) in posting_ids
+            ]
+            try:
+                post_feedback_items(conn, posted_channel, ts, card_items, today_str)
+            except Exception as exc:
+                print(f"[경고] 피드백 댓글 달기 실패: {exc!r}")
         if not sent:
             # 2026-10-06: 봇 토큰이 틀렸거나 봇이 채널에 초대되지 않았으면(not_in_channel) 그날 메시지가 통째로 안 나가므로
             # 기존 웹훅으로 보낸다. 넘친 공고는 웹훅 방식대로 본문 맨 아래 목록으로 붙인다.
@@ -491,6 +505,14 @@ def run_daily_notification(
     if sent:
         db.mark_notified(conn, [pid for pid, _ in all_pairs])
         db.mark_sent_today(conn, today_str)
+
+    # 2026-10-13: 최근 7일 피드백 댓글의 ✅/❌ 반응을 읽어 DB에 반영한다. 반응 조회가 수십 초 걸릴 수 있어 발송이 끝난 뒤에
+    # 하고, 결과(✅ 공고 → 팀 맞춤 공고)는 다음 실행부터 쓰인다.
+    if use_bot:
+        try:
+            collect_feedback(conn, datetime.now().date())
+        except Exception as exc:
+            print(f"[경고] Slack 반응 수집 실패: {exc!r}")
 
     conn.close()
 
@@ -652,6 +674,21 @@ def main():
             sync_proposals(report_conn, [])
         print_proposal_report(report_conn)
         report_conn.close()
+        return
+
+    if len(sys.argv) > 1 and sys.argv[1] == "feedback":
+        fb_conn = db.get_connection()
+        if "--collect" in sys.argv[2:]:
+            if not SLACK_BOT_TOKEN:
+                print("[에러] SLACK_BOT_TOKEN이 없습니다.")
+                sys.exit(1)
+            collect_feedback(fb_conn, datetime.now().date())
+        labels = {"fit": "✅ 우리 핏", "not_fit": "❌ 아님", "mixed": "엇갈림"}
+        rows = db.get_posting_feedback(fb_conn)
+        print(f"\n===== 공고 피드백 {len(rows)}건 =====")
+        for posting_id, label, fit, not_fit, title, org, updated in rows:
+            print(f"  {labels.get(label, label)} (✅{fit}/❌{not_fit}, {updated}) [{org}] {title or posting_id}")
+        fb_conn.close()
         return
 
     if len(sys.argv) > 1 and sys.argv[1] == "team-fit":
