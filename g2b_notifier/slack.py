@@ -285,14 +285,11 @@ def format_urgent_blocks(
     return blocks
 
 
-def post_with_bot(
-    text: str, blocks: list = None, thread_ts: str = None, max_retries: int = 3, channel: str = None, want_channel=False,
-):
+def post_with_bot(text: str, blocks: list = None, thread_ts: str = None, max_retries: int = 3, channel: str = None):
     """봇 토큰(config.SLACK_BOT_TOKEN)으로 chat.postMessage를 보낸다. 성공하면 메시지 ts(스레드 댓글을 달 때
     thread_ts로 쓴다), 실패하면 None. 웹훅과 달리 HTTP 200이어도 응답 JSON의 ok가 false일 수 있다
     (예: 봇이 채널에 초대되지 않았으면 not_in_channel). channel을 주면 SLACK_CHANNEL_ID 대신 그곳으로 보낸다
-    (사용자 ID를 주면 그 사람과 봇의 DM). want_channel=True면 (ts, 채널 ID)를 반환한다(실패 시 (None, None)) —
-    반응 조회(reactions.get)는 채널 이름이 아니라 ID가 필요하다."""
+    (사용자 ID를 주면 그 사람과 봇의 DM)."""
     from .config import SLACK_BOT_TOKEN, SLACK_CHANNEL_ID
 
     payload = {"channel": channel or SLACK_CHANNEL_ID, "text": text, "unfurl_links": False}
@@ -317,39 +314,11 @@ def post_with_bot(
             data = {}
         if data.get("ok"):
             print("[슬랙] 발송 성공" + (" (스레드 댓글)" if thread_ts else ""))
-            return (data.get("ts"), data.get("channel")) if want_channel else data.get("ts")
+            return data.get("ts")
         print(f"[슬랙] 발송 실패: HTTP {resp.status_code} / {data.get('error') or resp.text[:300]}")
-        return (None, None) if want_channel else None
+        return None
     print(f"[슬랙] {max_retries}회 재시도 후에도 발송 실패")
-    return (None, None) if want_channel else None
-
-
-def get_reactions(channel: str, ts: str):
-    """메시지에 달린 반응 [(이모지 이름, [사용자 ID, ...]), ...]. 실패하면 None과 함께 에러 코드를 출력한다
-    (봇에 reactions:read 권한이 없으면 missing_scope). 반환: (반응 목록 또는 None, 에러 코드 또는 None)."""
-    from .config import SLACK_BOT_TOKEN
-
-    headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
-    for _ in range(3):
-        try:
-            resp = requests.get(
-                "https://slack.com/api/reactions.get",
-                params={"channel": channel, "timestamp": ts, "full": "true"}, headers=headers, timeout=10,
-            )
-        except requests.exceptions.RequestException as exc:
-            return None, f"connection: {exc.__class__.__name__}"
-        if resp.status_code == 429:
-            time.sleep(int(resp.headers.get("Retry-After", "1")))
-            continue
-        try:
-            data = resp.json()
-        except ValueError:
-            return None, f"HTTP {resp.status_code}"
-        if not data.get("ok"):
-            return None, data.get("error")
-        reactions = (data.get("message") or {}).get("reactions") or []
-        return [(r.get("name", ""), r.get("users") or []) for r in reactions], None
-    return None, "ratelimited"
+    return None
 
 
 def parse_message_link(link: str):

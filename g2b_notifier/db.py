@@ -94,26 +94,6 @@ CREATE TABLE IF NOT EXISTS team_fit_refs (
 
 RAW_TITLE_RETENTION_DAYS = 60
 
-# 2026-10-13: Slack 반응 피드백(feedback.py). 공고 알림 스레드에 공고마다 댓글을 하나씩 달고(slack_feedback_msgs),
-# 그 댓글의 ✅/❌ 반응을 모아 공고별 라벨로 남긴다(posting_feedback). 나중에 통계 모델 학습 데이터로 쓴다.
-_FEEDBACK_SCHEMA = """
-CREATE TABLE IF NOT EXISTS slack_feedback_msgs (
-    channel TEXT NOT NULL,
-    ts TEXT NOT NULL,
-    posting_id TEXT NOT NULL,
-    sent_date TEXT NOT NULL,
-    PRIMARY KEY (channel, ts)
-);
-CREATE TABLE IF NOT EXISTS posting_feedback (
-    posting_id TEXT PRIMARY KEY,
-    label TEXT NOT NULL,
-    fit_count INTEGER NOT NULL,
-    not_fit_count INTEGER NOT NULL,
-    users TEXT,
-    updated_date TEXT NOT NULL
-);
-"""
-
 
 def get_connection() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -125,9 +105,6 @@ def get_connection() -> sqlite3.Connection:
     # 같이 저장해둔다 — 이게 없으면 발주기관/제목/마감일 같은 뼈대 정보만 남고 판정 근거를 잃어버린다.
     _ensure_column(conn, "postings", "classification_json", "TEXT")
     _ensure_column(conn, "postings", "method", "TEXT")
-    conn.executescript(_FEEDBACK_SCHEMA)
-    # 팀 맞춤 공고 출처: config(TEAM_FIT_SEEDS) 또는 slack(✅ 반응, feedback.py).
-    _ensure_column(conn, "team_fit_refs", "source", "TEXT NOT NULL DEFAULT 'config'")
     conn.commit()
     return conn
 
@@ -341,59 +318,6 @@ def sync_team_fit_refs(conn: sqlite3.Connection, seeds: list, today_str: str) ->
         "ON CONFLICT(id) DO UPDATE SET title = excluded.title, org = excluded.org",
         [(s["id"], s["title"], s.get("org", ""), today_str) for s in seeds],
     )
-    conn.commit()
-
-
-def save_feedback_messages(conn: sqlite3.Connection, rows: list, sent_date: str) -> None:
-    """rows: [(채널 ID, 메시지 ts, posting_id), ...]"""
-    conn.executemany(
-        "INSERT OR IGNORE INTO slack_feedback_msgs (channel, ts, posting_id, sent_date) VALUES (?, ?, ?, ?)",
-        [(ch, ts, pid, sent_date) for ch, ts, pid in rows],
-    )
-    conn.commit()
-
-
-def get_feedback_messages_since(conn: sqlite3.Connection, since_date: str) -> list:
-    """[(채널 ID, ts, posting_id), ...] — since_date(포함) 이후에 단 피드백 댓글."""
-    return conn.execute(
-        "SELECT channel, ts, posting_id FROM slack_feedback_msgs WHERE sent_date >= ? ORDER BY sent_date", (since_date,)
-    ).fetchall()
-
-
-def save_posting_feedback(conn: sqlite3.Connection, posting_id: str, label: str, fit: int, not_fit: int,
-                          users: list, today_str: str) -> None:
-    """공고 하나의 반응 집계를 저장한다. label이 'none'(반응 없음)이면 기존 기록을 지운다(반응을 취소한 경우)."""
-    if label == "none":
-        conn.execute("DELETE FROM posting_feedback WHERE posting_id = ?", (posting_id,))
-    else:
-        conn.execute(
-            "INSERT INTO posting_feedback (posting_id, label, fit_count, not_fit_count, users, updated_date) "
-            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(posting_id) DO UPDATE SET label = excluded.label, "
-            "fit_count = excluded.fit_count, not_fit_count = excluded.not_fit_count, users = excluded.users, "
-            "updated_date = excluded.updated_date",
-            (posting_id, label, fit, not_fit, json.dumps(sorted(users)), today_str),
-        )
-    conn.commit()
-
-
-def get_posting_feedback(conn: sqlite3.Connection) -> list:
-    """[(posting_id, label, fit_count, not_fit_count, 제목, 기관, updated_date), ...] 최근 갱신 순."""
-    return conn.execute(
-        "SELECT f.posting_id, f.label, f.fit_count, f.not_fit_count, COALESCE(p.title, ''), COALESCE(p.org, ''), "
-        "f.updated_date FROM posting_feedback f LEFT JOIN postings p ON p.id = f.posting_id ORDER BY f.updated_date DESC"
-    ).fetchall()
-
-
-def set_slack_team_fit_ref(conn: sqlite3.Connection, posting_id: str, is_fit: bool, today_str: str) -> None:
-    """✅로 '우리 핏'이 된 공고를 팀 맞춤 공고(source='slack')로 넣고, 라벨이 바뀌면 뺀다. config 출처 공고는 건드리지 않는다."""
-    if is_fit:
-        conn.execute(
-            "INSERT INTO team_fit_refs (id, title, org, added_date, source) "
-            "SELECT id, title, org, ?, 'slack' FROM postings WHERE id = ? ON CONFLICT(id) DO NOTHING",
-            (today_str, posting_id),
-        )
-    else:
-        conn.execute("DELETE FROM team_fit_refs WHERE id = ? AND source = 'slack'", (posting_id,))
     conn.commit()
 
 
