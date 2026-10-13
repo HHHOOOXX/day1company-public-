@@ -1,4 +1,4 @@
-"""공고 카드 버튼(✅ 우리 핏 / ❌ 아님) 피드백 — 버튼 만들기 + 클릭 기록을 DB에 넣기.
+"""공고 카드 버튼(✅ 적합함 / ❌ 아님) 피드백 — 버튼 만들기 + 클릭 기록을 DB에 넣기.
 
 2026-10-13 요청: "공고 하나하나에 버튼을 만들어 누르게" — 통계적 필터링 고도화의 1단계로, 우리 핏에 맞는/안 맞는 공고를
 건별로 DB에 쌓는다. Slack 버튼 클릭은 Slack이 앱의 Request URL로 바로 보내는데, 이 봇은 GitHub Actions에서 하루 한 번만
@@ -32,7 +32,7 @@ def actions_block(item: dict):
         return None
     title = item.get("bidNtceNm", "")[:80]
     buttons = []
-    for label, text in (("fit", "✅ 우리 핏"), ("not_fit", "❌ 아님")):
+    for label, text in (("fit", "✅ 적합함"), ("not_fit", "❌ 아님")):
         button = {"type": "button", "text": {"type": "plain_text", "text": text, "emoji": True}, "action_id": label}
         if FEEDBACK_LINK_TOKEN:
             # 링크 방식: 버튼이 웹앱 주소를 브라우저로 연다(apps_script/README.md).
