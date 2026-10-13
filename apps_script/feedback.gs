@@ -70,20 +70,9 @@ function doPost(e) {
     var value = {};
     try { value = JSON.parse(action.value); } catch (err) { value = { p: action.value }; }
     record_(value.p, action.action_id, user.id, user.name || user.username, value.t);
-    if (payload.response_url) {
-      // 누른 사람에게만 보이는 확인 메시지
-      UrlFetchApp.fetch(payload.response_url, {
-        method: 'post',
-        contentType: 'application/json',
-        muteHttpExceptions: true,
-        payload: JSON.stringify({
-          response_type: 'ephemeral',
-          replace_original: false,
-          text: LABELS[action.action_id] + '으로 기록했어요: ' + (value.t || value.p),
-        }),
-      });
-    }
   });
+  // 확인 메시지(response_url)는 보내지 않는다(2026-10-13 요청). Slack은 3초 안에 응답을 받아야 하는데, 확인 메시지를
+  // 보내는 시간만큼 응답이 늦어져 ⚠️ 경고가 뜰 수 있었다. 기록만 하고 바로 응답한다.
   return ContentService.createTextOutput('');
 }
 
