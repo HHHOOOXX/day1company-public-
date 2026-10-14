@@ -45,6 +45,7 @@ from .classify import (
     has_strong_fit,
     is_prior_proposal,
     set_learned_proposal_orgs,
+    set_past_win_model,
     set_team_fit_model,
     tag_business_area,
     team_fit_match,
@@ -59,6 +60,8 @@ from .config import (
     SLACK_MENTION,
     TEAM_FIT_SEEDS,
     FEEDBACK_LINK_TOKEN,
+    PARTNER_BID_WINS,
+    WIN_HISTORY,
     is_kr_holiday,
 )
 from .g2b import (
@@ -163,6 +166,12 @@ def _load_team_fit(conn) -> TeamFitModel:
     model = TeamFitModel(db.get_team_fit_refs(conn), db.get_all_titles(conn))
     set_team_fit_model(model)
     print(f"[팀 맞춤] 기준 공고 {len(model.refs)}건으로 비슷한 공고를 추천 공고에 올립니다")
+    # 2026-10-14: 중소기업·지역·업종 제한 공고를 파트너사 입찰 검토로 남길지 볼 때 쓰는 과거 수주 사업 모델(classify.partner_bid_fit).
+    wins = [
+        {"id": f"win:{i}", "title": w["project"], "org": w["org"]}
+        for i, w in enumerate(WIN_HISTORY + PARTNER_BID_WINS) if w.get("project")
+    ]
+    set_past_win_model(TeamFitModel(wins, db.get_all_titles(conn)))
     return model
 
 

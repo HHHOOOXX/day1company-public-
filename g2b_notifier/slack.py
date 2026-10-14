@@ -102,10 +102,12 @@ def _rank_entries(entries: list, today) -> list:
 
 
 def _flag_tags(item: dict) -> str:
-    """카드/목록 줄 끝에 붙이는 표시. 팀 맞춤 공고와 비슷한 공고(team_fit.py)와 우선검토."""
+    """카드/목록 줄 끝에 붙이는 표시. 팀 맞춤 공고와 비슷한 공고(team_fit.py), 파트너사 입찰 검토(2026-10-14), 우선검토."""
     tags = ""
     if item.get("_team_fit"):
         tags += "  `팀 맞춤 공고와 비슷`"
+    if item.get("_partner_bid"):
+        tags += "  `파트너사 입찰 검토`"
     if item.get("_priority_review"):
         tags += "  `우선검토`"
     return tags

@@ -19,6 +19,7 @@ from .classify import (
     downgrade,
     downgrade_for_doc_exclude,
     has_strong_fit,
+    keep_for_partner_bid,
     is_relevant_bid,
     is_relevant_prespec,
     passes_deadline_gate,
@@ -778,7 +779,8 @@ def check_region_eligibility(item: dict):
     if any(HQ_REGION_TOKEN in name for name in region_names):
         return True, True
 
-    print(f"  [지역제외] 참가가능지역 {region_names} 에 '{HQ_REGION_TOKEN}' 없음 -> 배제")
+    item["_region_names"] = region_names
+    print(f"  [지역제외] {bid_ntce_no} 참가가능지역 {region_names} 에 '{HQ_REGION_TOKEN}' 없음")
     return False, True
 
 
@@ -873,13 +875,17 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
             # 2026-10-06 요청: 교육·콘텐츠 신호가 강한 공고는 업종을 안 갖고 있어도 버리지 않고 확인필요로 보낸다
             # (공동수급·업종 추가 등록으로 참여할 수 있다). 실사례: R26BK01751861 "공공부문 인공지능 신뢰기반 제도
             # 교육 및 홍보 콘텐츠 제작" — 비디오물제작업/3244 제한.
-            if not item.get("_missing_induty") or not has_strong_fit(item.get("bidNtceNm", "")):
+            if not item.get("_missing_induty"):
                 return None
             missing = ", ".join(item["_missing_induty"])
-            downgrade(item, f"업종제한({missing}) 미보유 — 공동수급·업종 등록으로 참여 가능한지 확인 필요")
-            print(f"  [확인필요] {item.get('bidNtceNo', '')} 업종 미보유({missing})지만 교육·콘텐츠 신호가 강해 남김")
+            # 2026-10-14 요청: 우리 사업과 잘 맞으면 파트너사 명의 입찰 검토로 남긴다(classify.partner_bid_fit).
+            if not keep_for_partner_bid(item, f"업종제한({missing})"):
+                if not has_strong_fit(item.get("bidNtceNm", "")):
+                    return None
+                downgrade(item, f"업종제한({missing}) 미보유 — 공동수급·업종 등록으로 참여 가능한지 확인 필요")
+                print(f"  [확인필요] {item.get('bidNtceNo', '')} 업종 미보유({missing})지만 교육·콘텐츠 신호가 강해 남김")
         rgn_ok, rgn_certain = check_region_eligibility(item)
-        if not rgn_ok:
+        if not rgn_ok and not keep_for_partner_bid(item, f"지역제한({', '.join(item.get('_region_names') or [])})"):
             return None
         return item, ind_certain, rgn_certain, matched_codes
 
@@ -902,8 +908,9 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
         if scan is not None:
             cert, exclude_hits, doc_matched_codes, cert_note = scan
             if cert == "restricted":
-                print(f"  [제외] {item.get('bidNtceNo', '')} 중소기업·소상공인 한정 -> 배제 | 근거: {_short(cert_note)}")
-                continue
+                if not keep_for_partner_bid(item, "중소기업·소상공인 제한", _short(cert_note, 60)):
+                    print(f"  [제외] {item.get('bidNtceNo', '')} 중소기업·소상공인 한정 -> 배제 | 근거: {_short(cert_note)}")
+                    continue
             if cert == "mention":
                 print(f"  [확인필요] {item.get('bidNtceNo', '')} 확인서 언급(참가자격 부분 아님) | 근거: {_short(cert_note)}")
                 downgrade(item, f"첨부문서에 소상공인·중소기업 확인서가 언급됨(참가자격 제한인지 불확실): \"{_short(cert_note, 60)}\" — 직접 확인 필요")
@@ -1001,16 +1008,23 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
             # 2026-09-22 피드백: 과업지시서/제안요청서에 "중·소기업·소상공인 확인서" 등 우리가
             # 발급받을 수 없는 확인서를 참가자격으로 요구하면, 키워드/업종코드가 아무리 잘 맞아도
             # 애초에 참가 자체가 불가능하므로 완전히 제외한다(실사례: R26BD00276775).
-            print(f"  [제외] {item.get('bidNtceNo', '')} 중소기업·소상공인 한정 -> 배제 | 근거: {_short(resolved['cert_note'])}")
-            continue
+            # 2026-10-14 요청: 우리 사업과 잘 맞으면 파트너사 명의 입찰 검토로 남긴다(classify.partner_bid_fit).
+            if not keep_for_partner_bid(item, "중소기업·소상공인 제한", _short(resolved["cert_note"], 60)):
+                print(f"  [제외] {item.get('bidNtceNo', '')} 중소기업·소상공인 한정 -> 배제 | 근거: {_short(resolved['cert_note'])}")
+                continue
         if resolved["region"]:
             regions, note = resolved["region"]
-            print(f"  [지역제외] {item.get('bidNtceNo', '')} 첨부 참가자격에 {regions} 소재 조건(서울 없음) -> 배제 | 근거: {_short(note)}")
-            continue
+            if not keep_for_partner_bid(item, f"지역제한({', '.join(regions)} 소재)", _short(note, 60)):
+                print(f"  [지역제외] {item.get('bidNtceNo', '')} 첨부 참가자격에 {regions} 소재 조건(서울 없음) -> 배제 | 근거: {_short(note)}")
+                continue
         if resolved["industry"]:
             codes, note = resolved["industry"]
-            print(f"  [업종제외] {item.get('bidNtceNo', '')} 첨부 참가자격 업종코드 {codes} 미보유 -> 배제 | 근거: {_short(note)}")
-            continue
+            # 무관 업종(EXCLUDE_INDUSTRY_CODES — 행사대행업 등) 제한은 파트너사 입찰로도 살리지 않는다.
+            if set(codes) & EXCLUDE_INDUSTRY_CODES or not keep_for_partner_bid(
+                item, f"업종제한({', '.join(codes)})", _short(note, 60)
+            ):
+                print(f"  [업종제외] {item.get('bidNtceNo', '')} 첨부 참가자격 업종코드 {codes} 미보유 -> 배제 | 근거: {_short(note)}")
+                continue
         item["bidNtceDtlUrl"] = best_url
         item["_industry_codes"] = matched_codes
         # 2026-09-22 피드백: API의 title 필드(품명 분류값)만으로는 실제 사업 내용을 알 수 없는 건이 있어
