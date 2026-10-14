@@ -19,6 +19,7 @@ from .classify import (
     downgrade,
     downgrade_for_doc_exclude,
     has_strong_fit,
+    keep_for_partner_bid,
     is_relevant_bid,
     is_relevant_prespec,
     passes_deadline_gate,
@@ -36,7 +37,9 @@ from .config import (
     is_kr_holiday,
 )
 from .doc_extract import (
-    certificate_requirement,
+    certificate_evidence,
+    industry_restriction_evidence,
+    region_restriction_evidence,
     extract_document_text,
     find_industry_codes,
     matches_exclude_keyword,
@@ -501,7 +504,8 @@ def resolve_prespec_attachments(spec_urls: list):
     (2) 문서 본문에서 찾은 우리 보유 업종코드 교집합, (3) 소상공인/중소기업 확인서 요구 여부,
     (4) 제외 키워드(EXCLUDE_KEYWORDS) 매칭 여부를 함께 반환한다. 네 판정이 같은 다운로드를
     재사용하도록 묶어서, 건당 최대 5번인 요청 횟수가 늘지 않게 한다.
-    반환값: (best_url: str, matched_industry_codes: set, cert: "restricted"|"mention"|None, exclude_hits: list).
+    반환값: {"best_url", "matched_codes", "cert"("restricted"|"mention"|None), "cert_note"(근거 문장),
+    "region"((지역 목록, 근거) 또는 None), "industry"((업종코드 목록, 근거) 또는 None), "exclude_hits"}.
     첨부 다운로드가 하나라도 실패하면 None(다시 시도할 대상).
     최종 필터를 통과한 소수 건에만 호출한다.
     2026-09-22 피드백: 사전규격 R26BD00276775(한동대학교 산학협력단) 과업지시서에 "중·소기업·
@@ -512,7 +516,8 @@ def resolve_prespec_attachments(spec_urls: list):
     이미 있는 "설치"/"홍보"가 들어있어 첨부문서까지 열어야만 걸러낼 수 있었다."""
     candidates = [u for u in spec_urls if u]
     if not candidates:
-        return "", set(), False, []
+        return {"best_url": "", "matched_codes": set(), "cert": None, "cert_note": None, "region": None,
+                "industry": None, "exclude_hits": []}
 
     fetched = [(url, *_fetch_attachment(url)) for url in candidates]
     if any(not raw for _, _, raw in fetched):
@@ -529,19 +534,35 @@ def resolve_prespec_attachments(spec_urls: list):
         break
 
     matched_codes = set()
-    cert = None
+    cert, cert_note = None, None
+    region = industry = None
     exclude_hits = set()
     for _, filename, raw in fetched:
         if not raw:
             continue
         text = extract_document_text(raw, filename)
         matched_codes |= find_industry_codes(text)
-        doc_cert = certificate_requirement(text)
-        if doc_cert == "restricted" or cert is None:
-            cert = doc_cert or cert
+        doc_cert, note = certificate_evidence(text)
+        if doc_cert == "restricted" or (cert is None and doc_cert):
+            cert, cert_note = doc_cert, note
+        # 2026-10-14 요청: 사전규격은 지역·업종 제한 API가 없어 첨부의 참가자격 부분에서 확인한다.
+        region = region or _with_note(*region_restriction_evidence(text))
+        industry = industry or _with_note(*industry_restriction_evidence(text))
         exclude_hits.update(matches_exclude_keyword(text))
 
-    return best_url, matched_codes & COMPANY_INDUSTRY_CODES, cert, sorted(exclude_hits)
+    return {
+        "best_url": best_url, "matched_codes": matched_codes & COMPANY_INDUSTRY_CODES, "cert": cert,
+        "cert_note": cert_note, "region": region, "industry": industry, "exclude_hits": sorted(exclude_hits),
+    }
+
+
+def _with_note(found, note):
+    return (found, note) if found else None
+
+
+def _short(note: str, limit: int = 90) -> str:
+    note = note or ""
+    return note if len(note) <= limit else note[:limit] + "…"
 
 
 def fetch_pre_specs_for_date_range(start_date=None, end_date=None, page_size: int = 100, max_pages: int = 20):
@@ -758,7 +779,8 @@ def check_region_eligibility(item: dict):
     if any(HQ_REGION_TOKEN in name for name in region_names):
         return True, True
 
-    print(f"  [지역제외] 참가가능지역 {region_names} 에 '{HQ_REGION_TOKEN}' 없음 -> 배제")
+    item["_region_names"] = region_names
+    print(f"  [지역제외] {bid_ntce_no} 참가가능지역 {region_names} 에 '{HQ_REGION_TOKEN}' 없음")
     return False, True
 
 
@@ -792,10 +814,11 @@ def check_bid_attachment_issues(item: dict):
     재확인해야 한다.
     2026-10-06: 반환값의 첫 항목이 bool에서 확인서 판정(doc_extract.certificate_requirement: "restricted"/
     "mention"/None)으로 바뀌었다. "restricted"면 나머지는 빈 값으로 즉시 반환한다.
+    2026-10-14: 반환값 끝에 판정 근거 문장(cert_note)을 붙였다 — (cert, exclude_hits, matched_codes, cert_note).
     첨부 다운로드가 하나라도 실패하면 None(다시 시도할 대상)."""
     exclude_hits = set()
     matched_codes = set()
-    cert = None
+    cert, cert_note = None, None
     for i in range(1, 11):
         url = item.get(f"ntceSpecDocUrl{i}", "")
         if not url:
@@ -804,13 +827,14 @@ def check_bid_attachment_issues(item: dict):
         if not raw:
             return None  # 다운로드 실패 — _scan_in_rounds가 다음 회차에 다시 시도한다
         text = extract_document_text(raw, filename or item.get(f"ntceSpecFileNm{i}", ""))
-        doc_cert = certificate_requirement(text)
+        doc_cert, note = certificate_evidence(text)
         if doc_cert == "restricted":
-            return "restricted", [], set()
-        cert = cert or doc_cert
+            return "restricted", [], set(), note
+        if cert is None and doc_cert:
+            cert, cert_note = doc_cert, note
         exclude_hits.update(matches_exclude_keyword(text))
         matched_codes.update(find_industry_codes(text))
-    return cert, sorted(exclude_hits), matched_codes & COMPANY_INDUSTRY_CODES
+    return cert, sorted(exclude_hits), matched_codes & COMPANY_INDUSTRY_CODES, cert_note
 
 
 def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=None, alio_orgs=None):
@@ -846,19 +870,24 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
     # 1차: 업종제한/지역제한 공식 API 조회(공고당 2회, 빠름)를 전부 먼저 끝낸다 — 예전처럼 공고마다
     # 첨부파일 검사까지 한 번에 하면, 첨부 검사에 시간을 다 쓴 뒤 남은 공고는 이 조회조차 못 한다.
     def _check_eligibility(item):
+        rgn_ok, rgn_certain = check_region_eligibility(item)
+        if not rgn_ok:
+            # 지역제한은 파트너사 입찰로도 살리지 않는다(2026-10-14 요청 — 사업이 잘 맞아도 우리가 들어갈 수 없다).
+            return None
         ind_ok, ind_certain, matched_codes = check_induty_eligibility(item)
         if not ind_ok:
             # 2026-10-06 요청: 교육·콘텐츠 신호가 강한 공고는 업종을 안 갖고 있어도 버리지 않고 확인필요로 보낸다
             # (공동수급·업종 추가 등록으로 참여할 수 있다). 실사례: R26BK01751861 "공공부문 인공지능 신뢰기반 제도
             # 교육 및 홍보 콘텐츠 제작" — 비디오물제작업/3244 제한.
-            if not item.get("_missing_induty") or not has_strong_fit(item.get("bidNtceNm", "")):
+            if not item.get("_missing_induty"):
                 return None
             missing = ", ".join(item["_missing_induty"])
-            downgrade(item, f"업종제한({missing}) 미보유 — 공동수급·업종 등록으로 참여 가능한지 확인 필요")
-            print(f"  [확인필요] {item.get('bidNtceNo', '')} 업종 미보유({missing})지만 교육·콘텐츠 신호가 강해 남김")
-        rgn_ok, rgn_certain = check_region_eligibility(item)
-        if not rgn_ok:
-            return None
+            # 2026-10-14 요청: 우리 사업과 잘 맞으면 파트너사 명의 입찰 검토로 남긴다(classify.partner_bid_fit).
+            if not keep_for_partner_bid(item, f"업종제한({missing})"):
+                if not has_strong_fit(item.get("bidNtceNm", "")):
+                    return None
+                downgrade(item, f"업종제한({missing}) 미보유 — 공동수급·업종 등록으로 참여 가능한지 확인 필요")
+                print(f"  [확인필요] {item.get('bidNtceNo', '')} 업종 미보유({missing})지만 교육·콘텐츠 신호가 강해 남김")
         return item, ind_certain, rgn_certain, matched_codes
 
     with ThreadPoolExecutor(max_workers=ELIGIBILITY_CHECK_WORKERS) as pool:
@@ -878,12 +907,14 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
     for (item, ind_certain, rgn_certain, matched_codes), scan in zip(api_passed, scans):
         doc_matched_codes = set()
         if scan is not None:
-            cert, exclude_hits, doc_matched_codes = scan
+            cert, exclude_hits, doc_matched_codes, cert_note = scan
             if cert == "restricted":
-                print(f"  [제외] {item.get('bidNtceNo', '')} 소상공인/중소기업 확인서 소지를 참가자격으로 요구 -> 배제")
-                continue
+                if not keep_for_partner_bid(item, "중소기업·소상공인 제한", _short(cert_note, 60)):
+                    print(f"  [제외] {item.get('bidNtceNo', '')} 중소기업·소상공인 한정 -> 배제 | 근거: {_short(cert_note)}")
+                    continue
             if cert == "mention":
-                downgrade(item, "첨부문서에 소상공인·중소기업 확인서가 언급됨(참가자격 제한인지 불확실) — 직접 확인 필요")
+                print(f"  [확인필요] {item.get('bidNtceNo', '')} 확인서 언급(참가자격 부분 아님) | 근거: {_short(cert_note)}")
+                downgrade(item, f"첨부문서에 소상공인·중소기업 확인서가 언급됨(참가자격 제한인지 불확실): \"{_short(cert_note, 60)}\" — 직접 확인 필요")
             if exclude_hits:
                 # 2026-10-06 요청: 첨부 검사에서 걸린 건은 버리지 않고 확인필요로 낮춘다.
                 print(f"  [확인필요] {item.get('bidNtceNo', '')} 첨부문서 본문에서 제외 키워드 {exclude_hits} 확인")
@@ -972,13 +1003,29 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
             downgrade(item, "첨부 규격서를 끝내 확인하지 못함(다운로드 실패·시간 부족) — 중소기업확인서 요구·제외 대상 사업인지 직접 확인 필요")
             final.append(item)
             continue
-        best_url, matched_codes, cert, exclude_hits = resolved
+        best_url, matched_codes, cert = resolved["best_url"], resolved["matched_codes"], resolved["cert"]
+        exclude_hits = resolved["exclude_hits"]
+        if resolved["region"]:
+            # 지역제한은 파트너사 입찰로도 살리지 않는다(2026-10-14 요청). 그래서 다른 제한보다 먼저 본다.
+            regions, note = resolved["region"]
+            print(f"  [지역제외] {item.get('bidNtceNo', '')} 첨부 참가자격에 {regions} 소재 조건(서울 없음) -> 배제 | 근거: {_short(note)}")
+            continue
         if cert == "restricted":
             # 2026-09-22 피드백: 과업지시서/제안요청서에 "중·소기업·소상공인 확인서" 등 우리가
             # 발급받을 수 없는 확인서를 참가자격으로 요구하면, 키워드/업종코드가 아무리 잘 맞아도
             # 애초에 참가 자체가 불가능하므로 완전히 제외한다(실사례: R26BD00276775).
-            print(f"  [제외] {item.get('bidNtceNo', '')} 소상공인/중소기업 확인서 소지를 참가자격으로 요구 -> 배제")
-            continue
+            # 2026-10-14 요청: 우리 사업과 잘 맞으면 파트너사 명의 입찰 검토로 남긴다(classify.partner_bid_fit).
+            if not keep_for_partner_bid(item, "중소기업·소상공인 제한", _short(resolved["cert_note"], 60)):
+                print(f"  [제외] {item.get('bidNtceNo', '')} 중소기업·소상공인 한정 -> 배제 | 근거: {_short(resolved['cert_note'])}")
+                continue
+        if resolved["industry"]:
+            codes, note = resolved["industry"]
+            # 무관 업종(EXCLUDE_INDUSTRY_CODES — 행사대행업 등) 제한은 파트너사 입찰로도 살리지 않는다.
+            if set(codes) & EXCLUDE_INDUSTRY_CODES or not keep_for_partner_bid(
+                item, f"업종제한({', '.join(codes)})", _short(note, 60)
+            ):
+                print(f"  [업종제외] {item.get('bidNtceNo', '')} 첨부 참가자격 업종코드 {codes} 미보유 -> 배제 | 근거: {_short(note)}")
+                continue
         item["bidNtceDtlUrl"] = best_url
         item["_industry_codes"] = matched_codes
         # 2026-09-22 피드백: API의 title 필드(품명 분류값)만으로는 실제 사업 내용을 알 수 없는 건이 있어
@@ -992,7 +1039,8 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
             item["_tier"] = "include"
             item["_reasons"] = []
         if cert == "mention":
-            downgrade(item, "첨부문서에 소상공인·중소기업 확인서가 언급됨(참가자격 제한인지 불확실) — 직접 확인 필요")
+            print(f"  [확인필요] {item.get('bidNtceNo', '')} 확인서 언급(참가자격 부분 아님) | 근거: {_short(resolved['cert_note'])}")
+            downgrade(item, f"첨부문서에 소상공인·중소기업 확인서가 언급됨(참가자격 제한인지 불확실): \"{_short(resolved['cert_note'], 60)}\" — 직접 확인 필요")
         if exclude_hits:
             print(f"  [확인필요] {item.get('bidNtceNo', '')} 첨부문서 본문에서 제외 키워드 {exclude_hits} 확인")
             downgrade_for_doc_exclude(item, exclude_hits, "첨부문서")

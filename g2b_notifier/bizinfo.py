@@ -26,7 +26,7 @@ from .classify import (
     passes_deadline_gate,
 )
 from .config import BIZINFO_API_URL, BIZINFO_SERVICE_KEY, NATIONWIDE_OVERRIDE_KEYWORDS, NON_METRO_REGION_ORGS
-from .doc_extract import certificate_requirement, extract_document_text, matches_exclude_keyword
+from .doc_extract import certificate_evidence, extract_document_text, matches_exclude_keyword
 from .g2b import COLLECTION_WARNINGS, RAW_SOURCE_TITLES, get_lookback_range, get_with_retry
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -172,11 +172,12 @@ def is_region_restricted_by_attachment(texts: list) -> bool:
 def certificate_requirement_in(texts: list):
     """첨부 공고문들의 확인서 판정(doc_extract.certificate_requirement)을 합친다 — "restricted"가 하나라도 있으면
     "restricted", 아니면 "mention"이 있으면 "mention", 둘 다 없으면 None."""
-    results = {certificate_requirement(text) for text in texts}
-    if "restricted" in results:
-        print("  [제외] 첨부파일에 소상공인/중소기업 확인서 소지 요구 확인 -> 배제")
-        return "restricted"
-    return "mention" if "mention" in results else None
+    results = [certificate_evidence(text) for text in texts]
+    for verdict, note in results:
+        if verdict == "restricted":
+            print(f"  [제외] 첨부파일에서 중소기업·소상공인 한정 확인 -> 배제 | 근거: {(note or '')[:90]}")
+            return "restricted"
+    return "mention" if any(verdict == "mention" for verdict, _ in results) else None
 
 
 def _creat_date(raw_item: dict):

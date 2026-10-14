@@ -14,6 +14,10 @@ from .config import (
     ORG_KEYWORDS_BROAD,
     PROPOSAL_HISTORY,
     WEAK_EDU_KEYWORDS,
+    PARTNER_BID_BLOCK_KEYWORDS,
+    PARTNER_BID_CORE_KEYWORDS,
+    PARTNER_BID_DOMAIN_KEYWORDS,
+    PARTNER_BID_KEYWORDS,
     WIN_HISTORY,
 )
 from .slack import deadline_date
@@ -195,6 +199,70 @@ def team_fit_match(item: dict):
     if title_exclude_hits(title):
         return None
     return _TEAM_FIT_MODEL.match(title)
+
+
+# 2026-10-14: 과거 수주 사업(WIN_HISTORY·PARTNER_BID_WINS) 사업명으로 만든 비슷한 공고 판정 모델(team_fit.TeamFitModel).
+# 실행 시작 때 cli가 set_past_win_model()로 채운다.
+_PAST_WIN_MODEL = None
+
+
+def set_past_win_model(model) -> None:
+    global _PAST_WIN_MODEL
+    _PAST_WIN_MODEL = model
+
+
+def partner_bid_fit(item: dict):
+    """중소기업·업종 제한이 있어도(지역제한은 호출부에서 먼저 제외) 파트너사 명의 입찰로 들어갈 만한 공고인지(2026-10-14 요청 — 건국대 수주 건은
+    중소기업 제한이 있었지만 파트너사 이름으로 입찰해 따고 운영은 우리가 했다). 그렇다면 근거 문장, 아니면 None.
+    사업 내용이 우리가 해 온 일과 강하게 겹칠 때만 남긴다: 팀 맞춤 공고와 비슷함 / 과거 수주 사업과 비슷함 /
+    제목에 본업 키워드(PARTNER_BID_CORE_KEYWORDS)가 있거나, PARTNER_BID_KEYWORDS가 2개 이상이거나, 1개 + AI·디지털·창업 단서(PARTNER_BID_DOMAIN_KEYWORDS). 제목 제외 키워드가 있으면 None."""
+    title = item.get("bidNtceNm", "")
+    if title_exclude_hits(title):
+        return None
+    fit = team_fit_match(item)
+    if fit:
+        return f"팀 맞춤 공고 '{fit[0]['title']}'와 비슷"
+    if _PAST_WIN_MODEL is not None:
+        win = _PAST_WIN_MODEL.match(title)
+        if win:
+            return f"과거 수주 사업 '{win[0]['title']}'와 비슷({', '.join(win[1])})"
+    hits = _partner_keyword_hits(title, PARTNER_BID_KEYWORDS)
+    domain = _partner_keyword_hits(title, PARTNER_BID_DOMAIN_KEYWORDS)
+    if _partner_keyword_hits(title, PARTNER_BID_BLOCK_KEYWORDS):
+        return None
+    core = _partner_keyword_hits(title, PARTNER_BID_CORE_KEYWORDS)
+    if core or len(hits) >= 2 or (hits and domain):
+        return f"과거 수행 사업 키워드 {hits + domain}"
+    return None
+
+
+def _partner_keyword_hits(title: str, keywords) -> list:
+    """keywords 중 제목에 있는 것. 띄어쓰기는 무시하고("온라인 교육" = "온라인교육"), 영문 키워드는 다른 영문
+    글자에 붙어 있으면 치지 않는다("AX"가 "TAX"·"MAX"에 걸리지 않게)."""
+    compact = re.sub(r"\s+", "", title or "").upper()
+    hits = []
+    for kw in keywords:
+        k = kw.upper()
+        if k.isascii():
+            if re.search(rf"(?<![A-Z]){re.escape(k)}(?![A-Z])", compact):
+                hits.append(kw)
+        elif k in compact:
+            hits.append(kw)
+    return hits
+
+
+def keep_for_partner_bid(item: dict, restriction: str, evidence: str = "") -> bool:
+    """제한(restriction)에 걸린 공고를 파트너사 입찰 검토로 남길지 판정하고, 남기면 우선검토 확인필요로 표시한다.
+    남겼으면 True(호출부는 제외하지 않는다)."""
+    why = partner_bid_fit(item)
+    if not why:
+        return False
+    item["_partner_bid"] = restriction
+    note = f" — 근거: \"{evidence}\"" if evidence else ""
+    downgrade(item, f"{restriction}이 있지만 우리 사업과 잘 맞음({why}) — 파트너사 명의 입찰(건국대 사례)로 참여 검토{note}",
+              priority=True)
+    print(f"  [파트너입찰] {item.get('bidNtceNo', '')} {restriction}이지만 남김 | {why}")
+    return True
 
 
 # 2026-10-01: Google Drive "[제안 및 검토]" 폴더와 짝지어진 공고의 발주기관(proposals.py가 DB에 기록).
