@@ -141,7 +141,15 @@ _INELIGIBLE_CERTIFICATE_RE = re.compile(r"(?:소상공인|중소기업)(?:자)?[
 #     "소기업·소상공인확인서(입찰마감일 전일까지 발급된 것으로 유효기간 내에 있어야 함)를 소지한 자").
 #   - 그 밖에(제출서류 목록에 "중·소기업·소상공인 확인서 1부"만 있는 경우 등)는 제한인지 문서만으로 확정할 수
 #     없어 확인필요로 보낸다(실사례: R26BK01753055 경제금융교육 통합 홈페이지 구축).
-_CERT_BONUS_CONTEXT_RE = re.compile(r"가점|가산|우대|감면|면제|해당\s*시|해당자|해당\s*업체|해당하는\s*경우|해당되는\s*경우")
+_CERT_BONUS_CONTEXT_RE = re.compile(
+    r"가점|가산|우대|감면|면제|해당\s*시|해당자|해당\s*업체|해당하는\s*경우|해당되는\s*경우"
+    # 2026-10-14 실사례(첨부 검증): "소기업 또는 소상공인이 낙찰예정자일 경우에는 … 확인서를 보유"(R26BK01767839),
+    # "고시금액 미만인 입찰에 참여하는 소기업ㆍ소상공인(중소기업 확인서 …"(R26BD00284204 평가 주석),
+    # "확인이 되지 않는 경우 - 발급된 확인서가 … 다른 경우"(R26BK01767873) — 조건·평가 문맥이라 참가자격 제한이 아니다.
+)
+# 조건·평가 문맥(참가자격 제한인지 문서만으로 확정할 수 없음) → 버리지 않고 확인필요(mention)로 남긴다.
+_CERT_CONDITIONAL_BEFORE_RE = re.compile(r"경우|불구하고|고시금액|적격\s*심사|낙찰자\s*결정")
+_CERT_CONDITIONAL_AFTER_RE = re.compile(r"여부")
 # 2026-10-14: 뒤에 오는 "(해당자에 한함)", "해당 시 제출", "가점 부여" 같은 말도 참가자격이 아닌 문맥이다.
 _CERT_BONUS_AFTER_RE = re.compile(r"해당\s*(?:시|자|업체|기업|하는|되는|사항)|가점|가산|우대|감면|면제|신인도|평가\s*시")
 # 2026-10-14 요청: "소지/보유한 자/발급받은 자"만 보던 것을 넓힌다 — "확인서를 제출할 수 있는 자", "발급된 것으로서
@@ -202,11 +210,16 @@ def _snippet(text: str, start: int, end: int, before: int = 60, after: int = 60)
     return text[max(0, start - before):end + after].strip()
 
 
-def _is_bonus_context(text: str, start: int, end: int) -> bool:
-    return bool(
-        _CERT_BONUS_CONTEXT_RE.search(text[max(0, start - _CERT_BEFORE_WINDOW):start])
-        or _CERT_BONUS_AFTER_RE.search(text[end:end + _CERT_BONUS_AFTER_WINDOW])
-    )
+def _context_kind(text: str, start: int, end: int):
+    """"bonus"(가점·우대·해당자 — 참가자격 아님, 무시) / "conditional"(~일 경우·해당 여부·고시금액 미만 평가 주석 등
+    — 제한인지 불확실, 확인필요) / None(일반 문맥)."""
+    before = text[max(0, start - _CERT_BEFORE_WINDOW):start]
+    after = text[end:end + _CERT_BONUS_AFTER_WINDOW]
+    if _CERT_BONUS_CONTEXT_RE.search(before) or _CERT_BONUS_AFTER_RE.search(after):
+        return "bonus"
+    if _CERT_CONDITIONAL_BEFORE_RE.search(before) or _CERT_CONDITIONAL_AFTER_RE.search(after):
+        return "conditional"
+    return None
 
 
 def certificate_evidence(text: str):
@@ -216,20 +229,25 @@ def certificate_evidence(text: str):
       1) 확인서 단어 바로 뒤에 소지·보유·발급·제출할 수 있는 자·유효기간 같은 말이 오면 restricted.
       2) 참가자격 부분 안에 확인서 단어가 있거나, "중소기업자로서", "소기업·소상공인에 한함", "중소기업자간 경쟁",
          "제한경쟁(소기업·소상공인)", "직접생산확인증명서를 소지한" 같은 표현이 있으면 restricted.
-      3) 그 밖에 확인서 단어만 있으면 mention. 앞뒤에 가점·우대·해당 시·해당자 같은 말이 있으면 어느 경우든 무시한다."""
+      3) 그 밖에 확인서 단어만 있거나, 앞뒤가 조건·평가 문맥("~일 경우", "해당 여부", "고시금액 미만 … 참여하는")이면 mention.
+      앞뒤에 가점·우대·해당 시·해당자 같은 말이 있으면 어느 경우든 무시한다."""
     flat = _flat(text)
     mention = None
     for m in _INELIGIBLE_CERTIFICATE_RE.finditer(flat):
-        if _is_bonus_context(flat, m.start(), m.end()):
+        kind = _context_kind(flat, m.start(), m.end())
+        if kind == "bonus":
             continue
-        if _CERT_REQUIRED_CONTEXT_RE.search(flat[m.end():m.end() + _CERT_AFTER_WINDOW]):
+        if kind is None and _CERT_REQUIRED_CONTEXT_RE.search(flat[m.end():m.end() + _CERT_AFTER_WINDOW]):
             return "restricted", _snippet(flat, m.start(), m.end())
         mention = mention or _snippet(flat, m.start(), m.end())
     for passage in qualification_passages(flat):
         for regex in (_INELIGIBLE_CERTIFICATE_RE, _SME_ONLY_RE):
             for m in regex.finditer(passage):
-                if not _is_bonus_context(passage, m.start(), m.end()):
+                kind = _context_kind(passage, m.start(), m.end())
+                if kind is None:
                     return "restricted", _snippet(passage, m.start(), m.end())
+                if kind == "conditional":
+                    mention = mention or _snippet(passage, m.start(), m.end())
     return ("mention", mention) if mention else (None, None)
 
 
