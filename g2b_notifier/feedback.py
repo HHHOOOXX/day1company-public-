@@ -10,6 +10,7 @@
 """
 
 import json
+import re
 from datetime import datetime
 
 import requests
@@ -53,9 +54,16 @@ def fetch_feedback_rows():
         resp = requests.get(
             FEEDBACK_WEBAPP_URL, params={"action": "export", "token": FEEDBACK_EXPORT_TOKEN}, timeout=30
         )
-        data = resp.json()
-    except (requests.RequestException, ValueError) as exc:
+    except requests.RequestException as exc:
         print(f"[피드백] 버튼 기록 가져오기 실패: {exc!r}")
+        return None
+    try:
+        data = resp.json()
+    except ValueError:
+        # 2026-10-14: 웹앱이 JSON 대신 HTML(구글 로그인 화면·스크립트 오류 페이지 등)을 돌려준 경우. 원인을 알 수 있게 앞부분을 남긴다.
+        head = re.sub(r"<[^>]+>|\s+", " ", resp.text or "")[:160].strip()
+        print(f"[피드백] 버튼 기록 가져오기 실패: 웹앱이 JSON이 아닌 응답(HTTP {resp.status_code})을 돌려줌 — {head!r}. "
+              "Apps Script 저장 오류, 배포 권한(모든 사용자), 웹앱 URL이 바뀌었는지 확인")
         return None
     if not data.get("ok"):
         print(f"[피드백] 버튼 기록 가져오기 실패: {data.get('error')} (FEEDBACK_EXPORT_TOKEN이 스크립트 속성 EXPORT_TOKEN과 같은지 확인)")
