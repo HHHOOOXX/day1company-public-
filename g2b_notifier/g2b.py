@@ -870,6 +870,10 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
     # 1차: 업종제한/지역제한 공식 API 조회(공고당 2회, 빠름)를 전부 먼저 끝낸다 — 예전처럼 공고마다
     # 첨부파일 검사까지 한 번에 하면, 첨부 검사에 시간을 다 쓴 뒤 남은 공고는 이 조회조차 못 한다.
     def _check_eligibility(item):
+        rgn_ok, rgn_certain = check_region_eligibility(item)
+        if not rgn_ok:
+            # 지역제한은 파트너사 입찰로도 살리지 않는다(2026-10-14 요청 — 사업이 잘 맞아도 우리가 들어갈 수 없다).
+            return None
         ind_ok, ind_certain, matched_codes = check_induty_eligibility(item)
         if not ind_ok:
             # 2026-10-06 요청: 교육·콘텐츠 신호가 강한 공고는 업종을 안 갖고 있어도 버리지 않고 확인필요로 보낸다
@@ -884,9 +888,6 @@ def get_daily_relevant_bids(categories=("용역",), start_date=None, end_date=No
                     return None
                 downgrade(item, f"업종제한({missing}) 미보유 — 공동수급·업종 등록으로 참여 가능한지 확인 필요")
                 print(f"  [확인필요] {item.get('bidNtceNo', '')} 업종 미보유({missing})지만 교육·콘텐츠 신호가 강해 남김")
-        rgn_ok, rgn_certain = check_region_eligibility(item)
-        if not rgn_ok and not keep_for_partner_bid(item, f"지역제한({', '.join(item.get('_region_names') or [])})"):
-            return None
         return item, ind_certain, rgn_certain, matched_codes
 
     with ThreadPoolExecutor(max_workers=ELIGIBILITY_CHECK_WORKERS) as pool:
@@ -1004,6 +1005,11 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
             continue
         best_url, matched_codes, cert = resolved["best_url"], resolved["matched_codes"], resolved["cert"]
         exclude_hits = resolved["exclude_hits"]
+        if resolved["region"]:
+            # 지역제한은 파트너사 입찰로도 살리지 않는다(2026-10-14 요청). 그래서 다른 제한보다 먼저 본다.
+            regions, note = resolved["region"]
+            print(f"  [지역제외] {item.get('bidNtceNo', '')} 첨부 참가자격에 {regions} 소재 조건(서울 없음) -> 배제 | 근거: {_short(note)}")
+            continue
         if cert == "restricted":
             # 2026-09-22 피드백: 과업지시서/제안요청서에 "중·소기업·소상공인 확인서" 등 우리가
             # 발급받을 수 없는 확인서를 참가자격으로 요구하면, 키워드/업종코드가 아무리 잘 맞아도
@@ -1011,11 +1017,6 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
             # 2026-10-14 요청: 우리 사업과 잘 맞으면 파트너사 명의 입찰 검토로 남긴다(classify.partner_bid_fit).
             if not keep_for_partner_bid(item, "중소기업·소상공인 제한", _short(resolved["cert_note"], 60)):
                 print(f"  [제외] {item.get('bidNtceNo', '')} 중소기업·소상공인 한정 -> 배제 | 근거: {_short(resolved['cert_note'])}")
-                continue
-        if resolved["region"]:
-            regions, note = resolved["region"]
-            if not keep_for_partner_bid(item, f"지역제한({', '.join(regions)} 소재)", _short(note, 60)):
-                print(f"  [지역제외] {item.get('bidNtceNo', '')} 첨부 참가자격에 {regions} 소재 조건(서울 없음) -> 배제 | 근거: {_short(note)}")
                 continue
         if resolved["industry"]:
             codes, note = resolved["industry"]
