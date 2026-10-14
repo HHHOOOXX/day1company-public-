@@ -20,7 +20,7 @@ from io import BytesIO
 import olefile
 from pypdf import PdfReader
 
-from .config import DOC_EXCLUDE_KEYWORDS
+from .config import COMPANY_INDUSTRY_CODES, DOC_EXCLUDE_KEYWORDS, NATIONWIDE_OVERRIDE_KEYWORDS, NON_METRO_REGION_ORGS
 
 _HWPTAG_PARA_TEXT = 0x10 + 51  # HWPTAG_BEGIN(0x10) + 51
 
@@ -142,25 +142,134 @@ _INELIGIBLE_CERTIFICATE_RE = re.compile(r"(?:소상공인|중소기업)(?:자)?[
 #   - 그 밖에(제출서류 목록에 "중·소기업·소상공인 확인서 1부"만 있는 경우 등)는 제한인지 문서만으로 확정할 수
 #     없어 확인필요로 보낸다(실사례: R26BK01753055 경제금융교육 통합 홈페이지 구축).
 _CERT_BONUS_CONTEXT_RE = re.compile(r"가점|가산|우대|감면|면제|해당\s*시|해당자|해당\s*업체|해당하는\s*경우|해당되는\s*경우")
-_CERT_REQUIRED_CONTEXT_RE = re.compile(r"소지|보유한\s*자|발급받은\s*자")
+# 2026-10-14: 뒤에 오는 "(해당자에 한함)", "해당 시 제출", "가점 부여" 같은 말도 참가자격이 아닌 문맥이다.
+_CERT_BONUS_AFTER_RE = re.compile(r"해당\s*(?:시|자|업체|기업|하는|되는|사항)|가점|가산|우대|감면|면제|신인도|평가\s*시")
+# 2026-10-14 요청: "소지/보유한 자/발급받은 자"만 보던 것을 넓힌다 — "확인서를 제출할 수 있는 자", "발급된 것으로서
+# 유효기간 내에 있어야 함", "확인서가 발급된 업체" 같은 표현도 참가자격 요건이다.
+_CERT_REQUIRED_CONTEXT_RE = re.compile(
+    r"소지|보유(?:한|하고|중)|발급\s*(?:받은|된|받아|받고)|제출할\s*수\s*있는|제출\s*가능한|유효\s*기간\s*(?:내|이내)"
+)
 _CERT_BEFORE_WINDOW = 40
 _CERT_AFTER_WINDOW = 80
+_CERT_BONUS_AFTER_WINDOW = 30
+
+# 2026-10-14 요청: "중소기업 제한이 제대로 필터링 안 됨" — 확인서 단어 없이 자격만 적은 공고가 '불확실'로 그냥 발송됐다.
+# 첨부 본문 전체에서 단어를 찾는 대신, 먼저 참가자격 부분(입찰참가자격/신청자격/참여자격 등 제목 뒤 일정 길이)을 찾아
+# 그 안에서 판정한다 — 문서에서 관련 부분만 뽑아 읽는 검색 단계(RAG의 retrieval)를 규칙으로 한 것이다.
+_QUALIFICATION_HEADING_RE = re.compile(
+    r"(?:입찰\s*)?참가\s*자격|신청\s*자격|참여\s*자격|응모\s*자격|지원\s*자격|자격\s*요건|입찰\s*참가\s*등록"
+)
+_QUALIFICATION_WINDOW = 1500
+_WS_RE = re.compile(r"\s+")
+# 참가자격 부분 안에서 기업 규모를 제한하는 표현.
+_SME_ONLY_RE = re.compile(
+    r"(?:중소기업자|중소기업|소기업|소상공인)\s*(?:으로서|로서|에\s*한(?:함|하며|한다|하여|해|정)|만\s*(?:참|입찰|신청|가능|응)"
+    r"|간\s*(?:제한\s*)?경쟁)"
+    r"|제한\s*경쟁\s*[(（]?\s*(?:중소기업|소기업|소상공인)"
+    # 직접생산확인증명서는 중소기업자만 받을 수 있다(「중소기업제품 구매촉진 및 판로지원에 관한 법률」 제9조).
+    r"|직접\s*생산\s*확인\s*(?:증명서|서)?\s*(?:를|을)?\s*(?:소지|보유|발급)"
+)
+
+
+def _flat(text: str) -> str:
+    return _WS_RE.sub(" ", text or "")
+
+
+# 참가자격 다음에 흔히 오는 절 제목 — 여기서 끊는다(제출서류 목록의 "확인서 1부"는 참가자격이 아니라 확인필요로 남긴다).
+_NEXT_SECTION_RE = re.compile(
+    r"제출\s*서류|구비\s*서류|평가\s*(?:기준|방법|항목)|입찰\s*(?:방법|일정|보증)|낙찰자\s*결정|계약\s*방법|제안서\s*(?:작성|제출|평가)"
+    r"|유의\s*사항|기타\s*사항|과업\s*(?:내용|범위)"
+)
+
+
+def qualification_passages(text: str) -> list:
+    """본문에서 참가자격 부분들(제목부터 다음 절 제목 또는 _QUALIFICATION_WINDOW자까지)을 뽑는다. 겹치는 부분은 합친다."""
+    flat = _flat(text)
+    spans = []
+    for m in _QUALIFICATION_HEADING_RE.finditer(flat):
+        start, end = m.start(), min(len(flat), m.start() + _QUALIFICATION_WINDOW)
+        nxt = _NEXT_SECTION_RE.search(flat, m.end() + 20, end)
+        if nxt:
+            end = nxt.start()
+        if spans and start <= spans[-1][1]:
+            spans[-1] = (spans[-1][0], end)
+        else:
+            spans.append((start, end))
+    return [flat[a:b] for a, b in spans]
+
+
+def _snippet(text: str, start: int, end: int, before: int = 60, after: int = 60) -> str:
+    return text[max(0, start - before):end + after].strip()
+
+
+def _is_bonus_context(text: str, start: int, end: int) -> bool:
+    return bool(
+        _CERT_BONUS_CONTEXT_RE.search(text[max(0, start - _CERT_BEFORE_WINDOW):start])
+        or _CERT_BONUS_AFTER_RE.search(text[end:end + _CERT_BONUS_AFTER_WINDOW])
+    )
+
+
+def certificate_evidence(text: str):
+    """본문 텍스트에서 기업 규모(소상공인·중소기업) 제한을 판정하고 근거 문장을 함께 돌려준다.
+    반환: (판정, 근거 문장) — 판정은 "restricted"(참가 불가 확정) / "mention"(언급만 있음, 확인필요) / None.
+    데이원컴퍼니는 중견기업이라 소상공인·중소기업 확인서나 직접생산확인증명서를 받을 수 없다.
+      1) 확인서 단어 바로 뒤에 소지·보유·발급·제출할 수 있는 자·유효기간 같은 말이 오면 restricted.
+      2) 참가자격 부분 안에 확인서 단어가 있거나, "중소기업자로서", "소기업·소상공인에 한함", "중소기업자간 경쟁",
+         "제한경쟁(소기업·소상공인)", "직접생산확인증명서를 소지한" 같은 표현이 있으면 restricted.
+      3) 그 밖에 확인서 단어만 있으면 mention. 앞뒤에 가점·우대·해당 시·해당자 같은 말이 있으면 어느 경우든 무시한다."""
+    flat = _flat(text)
+    mention = None
+    for m in _INELIGIBLE_CERTIFICATE_RE.finditer(flat):
+        if _is_bonus_context(flat, m.start(), m.end()):
+            continue
+        if _CERT_REQUIRED_CONTEXT_RE.search(flat[m.end():m.end() + _CERT_AFTER_WINDOW]):
+            return "restricted", _snippet(flat, m.start(), m.end())
+        mention = mention or _snippet(flat, m.start(), m.end())
+    for passage in qualification_passages(flat):
+        for regex in (_INELIGIBLE_CERTIFICATE_RE, _SME_ONLY_RE):
+            for m in regex.finditer(passage):
+                if not _is_bonus_context(passage, m.start(), m.end()):
+                    return "restricted", _snippet(passage, m.start(), m.end())
+    return ("mention", mention) if mention else (None, None)
 
 
 def certificate_requirement(text: str):
-    """본문 텍스트의 소상공인/중소기업 확인서 언급을 문맥으로 판정한다.
-    "restricted": 확인서 소지를 참가자격으로 요구함(데이원컴퍼니는 중견기업이라 발급 불가 → 참가 불가).
-    "mention": 확인서를 언급하지만 참가자격 제한인지 확정할 수 없음(제출서류 목록 등) → 확인필요.
-    None: 언급이 없거나 가점·해당 시 제출 같은 참가자격과 무관한 문맥뿐."""
-    text = text or ""
-    found = None
-    for m in _INELIGIBLE_CERTIFICATE_RE.finditer(text):
-        if _CERT_BONUS_CONTEXT_RE.search(text[max(0, m.start() - _CERT_BEFORE_WINDOW):m.start()]):
+    """certificate_evidence의 판정만 돌려준다: "restricted" / "mention" / None."""
+    return certificate_evidence(text)[0]
+
+
+# 2026-10-14 요청: 사전규격은 지역·업종 제한을 알려주는 API가 없어 첨부의 참가자격 부분에서 직접 확인한다.
+# 참가자격 부분 안의 '소재/본사/본점/영업소' 앞뒤에 나온 지역이 서울을 포함하지 않으면 지역제한(서울 본사라 참가 불가).
+# 참가자격 부분이 아닌 곳(용역 수행 장소 "대전광역시 소재 OO대학교" 등)은 보지 않는다.
+_REGION_ANCHOR_RE = re.compile(r"소재|본사|본점|주된\s*영업소|영업소")
+_HQ_REGION_TOKENS = ("서울",)
+
+
+def region_restriction_evidence(text: str):
+    """참가자격 부분에서 서울이 빠진 지역 제한을 찾는다. 반환: (지역 목록, 근거 문장) 또는 (None, None)."""
+    for passage in qualification_passages(text):
+        if any(kw in passage for kw in NATIONWIDE_OVERRIDE_KEYWORDS) or "전국" in passage[:400]:
             continue
-        if _CERT_REQUIRED_CONTEXT_RE.search(text[m.end():m.end() + _CERT_AFTER_WINDOW]):
-            return "restricted"
-        found = "mention"
-    return found
+        for m in _REGION_ANCHOR_RE.finditer(passage):
+            window = passage[max(0, m.start() - 40):m.end() + 15]
+            regions = sorted({t for t in NON_METRO_REGION_ORGS if t in window})
+            if regions and not any(t in window for t in _HQ_REGION_TOKENS):
+                return regions, _snippet(passage, m.start(), m.end())
+    return None, None
+
+
+_YEAR_LIKE = {str(y) for y in range(2015, 2036)}
+
+
+def industry_restriction_evidence(text: str):
+    """참가자격 부분에 업종코드가 적혀 있는데 우리 보유 업종코드가 하나도 없으면 (찾은 코드, 근거 문장).
+    아니면 (None, None). 연도처럼 보이는 숫자(2015~2035)는 코드로 보지 않는다."""
+    for passage in qualification_passages(text):
+        codes = find_industry_codes(passage) - _YEAR_LIKE
+        if codes and not (codes & COMPANY_INDUSTRY_CODES):
+            m = re.search("업종코드", passage)
+            return sorted(codes), _snippet(passage, m.start(), m.end(), 40, 120)
+    return None, None
 
 
 def requires_ineligible_certificate(text: str) -> bool:
