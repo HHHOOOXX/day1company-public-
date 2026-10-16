@@ -108,8 +108,13 @@ def title_exclude_hits(title: str) -> list:
     return _matched_keywords(title, EXCLUDE_KEYWORDS) + _unfit_soft_exclude_hits(title)
 
 
+# 제목 속 기관명의 '교육'(교육청·교육지원청·교육진흥원 등)은 우리 핏 신호가 아니다(2026-10-16 — "한국영유아보육·교육진흥원
+# 업무용 노트북 임차"가 '교육'으로 살아났다).
+_ORG_EDU_RE = re.compile(r"교육(?:지원청|청|진흥원|연구원|연수원|원|재단|감|부)")
+
+
 def _unfit_soft_exclude_hits(title: str) -> list:
-    if _matched_keywords(title, FIT_OVERRIDE_KEYWORDS):
+    if _matched_keywords(_ORG_EDU_RE.sub("", title or ""), FIT_OVERRIDE_KEYWORDS):
         return []
     return _matched_keywords(title, EXCLUDE_KEYWORDS_UNLESS_FIT)
 
