@@ -9,6 +9,7 @@ from .config import (
     EXCLUDE_KEYWORDS,
     EXCLUDE_KEYWORDS_UNLESS_FIT,
     EXCLUDE_PROCUREMENT_CATEGORIES,
+    ALWAYS_EXCLUDE_KEYWORDS,
     FIT_OVERRIDE_KEYWORDS,
     ORG_KEYWORDS,
     ORG_KEYWORDS_BROAD,
@@ -105,16 +106,12 @@ def _keyword_confidence(title: str) -> str:
 def title_exclude_hits(title: str) -> list:
     """제목에 걸린 제외 키워드 목록. EXCLUDE_KEYWORDS_UNLESS_FIT(2026-10-13)는 제목에 우리 핏 키워드
     (FIT_OVERRIDE_KEYWORDS)가 같이 있으면 제외 키워드로 치지 않는다."""
-    return _matched_keywords(title, EXCLUDE_KEYWORDS) + _unfit_soft_exclude_hits(title)
-
-
-# 제목 속 기관명의 '교육'(교육청·교육지원청·교육진흥원 등)은 우리 핏 신호가 아니다(2026-10-16 — "한국영유아보육·교육진흥원
-# 업무용 노트북 임차"가 '교육'으로 살아났다).
-_ORG_EDU_RE = re.compile(r"교육(?:지원청|청|진흥원|연구원|연수원|원|재단|감|부)")
+    return (_matched_keywords(title, EXCLUDE_KEYWORDS) + _unfit_soft_exclude_hits(title)
+            + _matched_keywords(title, ALWAYS_EXCLUDE_KEYWORDS))
 
 
 def _unfit_soft_exclude_hits(title: str) -> list:
-    if _matched_keywords(_ORG_EDU_RE.sub("", title or ""), FIT_OVERRIDE_KEYWORDS):
+    if _matched_keywords(title, FIT_OVERRIDE_KEYWORDS):
         return []
     return _matched_keywords(title, EXCLUDE_KEYWORDS_UNLESS_FIT)
 
@@ -123,7 +120,7 @@ def is_title_excluded(title: str) -> bool:
     """제목만으로 관심 공고에서 뺄지. EXCLUDE_KEYWORDS는 교육·콘텐츠 신호가 강하면(has_strong_fit) 살리고(2026-10-06),
     EXCLUDE_KEYWORDS_UNLESS_FIT는 FIT_OVERRIDE_KEYWORDS가 있을 때만 살린다(2026-10-13 — has_strong_fit로 살리면
     기관명의 '창업'이나 '전략적 육성' 같은 말 때문에 시설물 관리·백신 생산 공고가 남았다)."""
-    if _unfit_soft_exclude_hits(title):
+    if _unfit_soft_exclude_hits(title) or _matched_keywords(title, ALWAYS_EXCLUDE_KEYWORDS):
         return True
     return bool(_matched_keywords(title, EXCLUDE_KEYWORDS)) and not has_strong_fit(title)
 
