@@ -383,9 +383,27 @@ def sync_feedback_team_fit_refs(conn: sqlite3.Connection, fit_ids: set, today_st
 
 
 def get_team_fit_refs(conn: sqlite3.Connection) -> list:
-    """[{"id", "title", "org"}, ...]"""
-    rows = conn.execute("SELECT id, title, org FROM team_fit_refs ORDER BY added_date, id").fetchall()
-    return [{"id": i, "title": t, "org": o or ""} for i, t, o in rows]
+    """[{"id", "title", "org", "source", "added_date"}, ...]"""
+    rows = conn.execute(
+        "SELECT id, title, org, source, added_date FROM team_fit_refs ORDER BY added_date, id").fetchall()
+    return [{"id": i, "title": t, "org": o or "", "source": s, "added_date": d} for i, t, o, s, d in rows]
+
+
+def get_feedback_postings(conn: sqlite3.Connection) -> list:
+    """버튼 피드백이 있는 공고: [{"id", "label", "title", "team_fit"}, ...]. team_fit은 그 공고를 보낼 때 비슷하다고 본
+    팀 맞춤 기준({"ref_id"?, "ref", "cues"}) 또는 None — learning.py가 기준별 성적을 셀 때 쓴다."""
+    rows = conn.execute(
+        "SELECT f.posting_id, f.label, p.title, p.classification_json FROM posting_feedback f "
+        "LEFT JOIN postings p ON p.id = f.posting_id"
+    ).fetchall()
+    out = []
+    for posting_id, label, title, cj in rows:
+        try:
+            team_fit = (json.loads(cj) if cj else {}).get("team_fit")
+        except ValueError:
+            team_fit = None
+        out.append({"id": posting_id, "label": label, "title": title or "", "team_fit": team_fit})
+    return out
 
 
 def get_all_titles(conn: sqlite3.Connection) -> list:

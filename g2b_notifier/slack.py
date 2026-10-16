@@ -121,15 +121,22 @@ def split_top(entries: list, today, top_n: int):
 
 def format_overflow_text(sections: list, today) -> str:
     """카드에 못 넣은 공고 목록 텍스트(스레드 댓글 또는 본문 맨 아래용).
-    sections: [(섹션 제목, [(tag, label, item), ...]), ...] — 빈 섹션은 건너뛴다."""
+    sections: [(섹션 제목, [(tag, label, item), ...]) 또는 (섹션 제목, entries, 머리줄), ...] — 빈 섹션은 건너뛴다.
+    머리줄을 주면 "카드에 못 넣은 N건" 대신 그 문구를 쓴다(2026-10-16 파트너사 입찰 검토 묶음)."""
     parts = []
-    for title, entries in sections:
+    for title, entries, heading in map(_with_heading, sections):
         if not entries:
             continue
-        lines = [f"*{title} — 카드에 못 넣은 {len(entries)}건*"]
+        lines = [heading]
         lines += [_overflow_line(idx, tag, label, item) for idx, (tag, label, item) in enumerate(entries, 1)]
         parts.append("\n".join(lines))
     return "\n\n".join(parts)
+
+
+def _with_heading(section: tuple) -> tuple:
+    title, entries = section[0], section[1]
+    heading = section[2] if len(section) > 2 else f"*{title} — 카드에 못 넣은 {len(entries)}건*"
+    return title, entries, heading
 
 
 def _overflow_line(idx: int, tag: str, label: str, item: dict) -> str:
@@ -138,10 +145,14 @@ def _overflow_line(idx: int, tag: str, label: str, item: dict) -> str:
     item_title = item.get("bidNtceNm", "")
     title_part = f"<{url}|{item_title}>" if url else item_title
     date_text = f"{d.month}/{d.day}" if d else "미정"
-    return (
+    line = (
         f"{idx}. *[{item.get('ntceInsttNm', '')}]* {title_part} — "
         f"{item.get('_deadline_basis') or label} {date_text}  `{tag}`{_flag_tags(item)}"
     )
+    if item.get("_partner_bid"):
+        # 어떤 제한 때문에 파트너사 명의 입찰을 검토해야 하는지 한 줄 더 붙인다(2026-10-16).
+        line += f"\n      ↳ {item['_partner_bid']} — 파트너사 명의로 입찰하고 운영은 우리가 하는 방식 검토"
+    return line
 
 
 def format_overflow_messages(sections: list, after_item, max_blocks: int = 50) -> list:
@@ -156,7 +167,7 @@ def format_overflow_messages(sections: list, after_item, max_blocks: int = 50) -
             messages.append((f"카드에 못 넣은 공고 {count}건", blocks))
         blocks, count = [], 0
 
-    for title, entries in sections:
+    for title, entries, first_heading in map(_with_heading, sections):
         if not entries:
             continue
         first = True
@@ -165,7 +176,7 @@ def format_overflow_messages(sections: list, after_item, max_blocks: int = 50) -
             extra = after_item(item)
             if extra:
                 item_blocks.append(extra)
-            heading = f"*{title} — 카드에 못 넣은 {len(entries)}건*" if first else f"*{title} — 이어서*"
+            heading = first_heading if first else f"*{title} — 이어서*"
             head = [mrkdwn_section(heading)] if first else []
             if len(blocks) + len(head) + len(item_blocks) > max_blocks:
                 flush()
