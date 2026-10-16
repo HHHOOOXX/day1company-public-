@@ -215,9 +215,11 @@ def partner_bid_fit(item: dict):
     """중소기업·업종 제한이 있어도(지역제한은 호출부에서 먼저 제외) 파트너사 명의 입찰로 들어갈 만한 공고인지(2026-10-14 요청 — 건국대 수주 건은
     중소기업 제한이 있었지만 파트너사 이름으로 입찰해 따고 운영은 우리가 했다). 그렇다면 근거 문장, 아니면 None.
     사업 내용이 우리가 해 온 일과 강하게 겹칠 때만 남긴다: 팀 맞춤 공고와 비슷함 / 과거 수주 사업과 비슷함 /
-    제목에 본업 키워드(PARTNER_BID_CORE_KEYWORDS)가 있거나, PARTNER_BID_KEYWORDS가 2개 이상이거나, 1개 + AI·디지털·창업 단서(PARTNER_BID_DOMAIN_KEYWORDS). 제목 제외 키워드가 있으면 None."""
+    제목에 본업 키워드(PARTNER_BID_CORE_KEYWORDS)가 있거나, PARTNER_BID_KEYWORDS가 2개 이상이거나, 1개 + AI·디지털·창업 단서(PARTNER_BID_DOMAIN_KEYWORDS). 제목만으로 관심 공고에서 빠지는 건(is_title_excluded)은 None."""
     title = item.get("bidNtceNm", "")
-    if title_exclude_hits(title):
+    # 관심 공고 판정과 같은 기준으로만 막는다(2026-10-14) — "창업 솔버톤 대회 행사 대행"처럼 제외 키워드('행사 대행')가 있어도
+    # 교육·창업 신호가 강해 관심 공고로 남은 건은 파트너사 입찰 검토 대상이 될 수 있다.
+    if is_title_excluded(title):
         return None
     fit = team_fit_match(item)
     if fit:

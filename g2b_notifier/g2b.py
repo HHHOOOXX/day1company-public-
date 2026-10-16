@@ -27,6 +27,7 @@ from .classify import (
 from .config import (
     BASE_URL,
     COMPANY_INDUSTRY_CODES,
+    NON_FIT_COMPANY_INDUSTRY_CODES,
     EDU_KEYWORDS,
     EXCLUDE_INDUSTRY_CODES,
     OPERATIONS,
@@ -727,7 +728,7 @@ def check_induty_eligibility(item: dict):
                 print(f"  [업종제외] {excluded_hit} 코드가 제한 그룹에 있고 보유 업종과 안 겹침 -> 배제")
             else:
                 # 호출부가 교육·콘텐츠 신호가 강한 공고를 확인필요로 살릴 때 쓴다(2026-10-06). 무관 업종으로
-                # 짚어준 EXCLUDE_INDUSTRY_CODES(행사대행업 9901 등)가 걸린 그룹은 살리지 않는다.
+                # 짚어준 EXCLUDE_INDUSTRY_CODES(여행업 등)가 걸린 그룹은 살리지 않는다.
                 item["_missing_induty"] = names[grp]
             return False, True, set()  # 이 그룹을 보유 업종으로 채울 수 없음 -> 참가 불가 확정
         matched_codes |= overlap
@@ -1020,7 +1021,7 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
                 continue
         if resolved["industry"]:
             codes, note = resolved["industry"]
-            # 무관 업종(EXCLUDE_INDUSTRY_CODES — 행사대행업 등) 제한은 파트너사 입찰로도 살리지 않는다.
+            # 무관 업종(EXCLUDE_INDUSTRY_CODES — 여행업 등) 제한은 파트너사 입찰로도 살리지 않는다.
             if set(codes) & EXCLUDE_INDUSTRY_CODES or not keep_for_partner_bid(
                 item, f"업종제한({', '.join(codes)})", _short(note, 60)
             ):
@@ -1033,7 +1034,8 @@ def get_daily_relevant_pre_specs(start_date=None, end_date=None, historical_bid_
         # 제외 키워드를 재확인한다. 2026-10-06 요청: 걸려도 버리지 않고 확인필요로 낮춘다.
         # 제목 제외 키워드로 우선검토가 된 건(attach_confidence)은 업종코드가 맞아도 확실포함으로 올리지 않는다.
         doubts = cert == "mention" or exclude_hits or item.get("_priority_review")
-        if matched_codes and not doubts:
+        # 2026-10-16: 행사대행업(9901)처럼 보유는 했지만 사업 내용 신호가 아닌 코드만 맞았으면 올리지 않는다.
+        if matched_codes - NON_FIT_COMPANY_INDUSTRY_CODES and not doubts:
             # 2026-09-18 피드백: 제안요청서 원문에서 우리 보유 업종코드가 실제로 확인되면(예:
             # "이러닝콘텐츠업 (업종코드: 6527)") 키워드 매칭보다 훨씬 강한 신호이므로 확실로 격상한다.
             item["_tier"] = "include"
