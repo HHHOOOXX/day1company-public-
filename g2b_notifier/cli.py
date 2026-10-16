@@ -37,6 +37,7 @@ import os
 from . import db
 from .proposals import print_report as print_proposal_report, sync_proposals
 from . import feedback
+from . import learning
 from .team_fit import TeamFitModel
 from .agencies import AGENCY_UNSUPPORTED, fetch_all_agency_rows, get_daily_relevant_agency_notices, normalize_title
 from .alio import fetch_alio_org_names, fetch_alio_preview
@@ -45,6 +46,7 @@ from .classify import (
     has_strong_fit,
     is_prior_proposal,
     set_learned_proposal_orgs,
+    set_not_fit_model,
     set_past_win_model,
     set_team_fit_model,
     tag_business_area,
@@ -163,9 +165,16 @@ BACKFILL_TIME_LIMIT_SECONDS = 900
 def _load_team_fit(conn) -> TeamFitModel:
     """config.TEAM_FIT_SEEDS를 DB(team_fit_refs)에 넣고, DB의 팀 맞춤 공고 전체로 비슷한 공고 판정 모델을 만들어 classify에 건다."""
     db.sync_team_fit_refs(conn, TEAM_FIT_SEEDS, datetime.now().date().isoformat())
-    model = TeamFitModel(db.get_team_fit_refs(conn), db.get_all_titles(conn))
+    corpus = db.get_all_titles(conn)
+    # 2026-10-16: 카드 ✅로 들어온 기준은 learning.py로 한 번 더 거른다(제외 키워드·자동 퇴출·❌ 반영·비중 점진 조정).
+    refs, not_fit_refs, stats = learning.build_refs(
+        db.get_team_fit_refs(conn), db.get_feedback_postings(conn), datetime.now().date()
+    )
+    model = TeamFitModel(refs, corpus)
     set_team_fit_model(model)
+    set_not_fit_model(TeamFitModel(not_fit_refs, corpus) if not_fit_refs else None)
     print(f"[팀 맞춤] 기준 공고 {len(model.refs)}건으로 비슷한 공고를 추천 공고에 올립니다")
+    print(learning.describe(stats))
     # 2026-10-14: 중소기업·지역·업종 제한 공고를 파트너사 입찰 검토로 남길지 볼 때 쓰는 과거 수주 사업 모델(classify.partner_bid_fit).
     wins = [
         {"id": f"win:{i}", "title": w["project"], "org": w["org"]}
@@ -397,7 +406,19 @@ def run_daily_notification(
     agency_entries, agency_rest = split_top(agency_entries, today, agency_top_n)
     # 2026-10-06 요청: 카드(상위 5~10건)에 못 넣은 공고를 버리지 않고 스레드 댓글(봇 토큰이 있을 때) 또는
     # 본문 맨 아래 목록(웹훅만 있을 때)으로 보낸다.
-    overflow_sections = [(core_title, core_rest), (review_title, review_rest), (agency_title, agency_rest)]
+    # 2026-10-16 요청: 파트너사 입찰 검토 공고(중소기업·업종 제한이 있지만 우리 사업과 잘 맞는 공고)는 카드에 있든 없든
+    # 스레드 댓글 맨 앞에 따로 모아 어떤 제한인지와 함께 다시 보여준다.
+    partner_title = "\U0001F91D 파트너사 입찰 검토"
+    partner_entries = [e for e in core_entries + review_entries + core_rest + review_rest if e[2].get("_partner_bid")]
+    partner_heading = (
+        f"*{partner_title} — {len(partner_entries)}건*\n"
+        "_중소기업·업종 제한이 있어 우리 이름으로는 못 들어가지만 사업 내용이 잘 맞는 공고예요. "
+        "파트너사 명의로 입찰하고 운영은 우리가 하는 방식(건국대 사례)으로 검토해 보세요._"
+    )
+    overflow_sections = [
+        (partner_title, partner_entries, partner_heading),
+        (core_title, core_rest), (review_title, review_rest), (agency_title, agency_rest),
+    ]
     overflow_text = format_overflow_text(overflow_sections, today)
     use_bot = bool(SLACK_BOT_TOKEN and SLACK_CHANNEL_ID)
 

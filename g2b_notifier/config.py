@@ -373,6 +373,17 @@ WIN_HISTORY = [
     {"date": "2026-08", "org": "한국거래소", "project": "디지털혁신과정 온라인 연수 운영"},
 ]
 
+# 2026-10-16 요청: 카드 ✅ 학습 개선(learning.py). 잘못 누른 ✅를 사람이 지우지 않아도 걸러지게 한다.
+# - ✅ 판정이 FEEDBACK_FULL_WEIGHT_JUDGED건(✅·❌ 합계)이 쌓이기 전에는 ✅ 기준을 엄격하게 쓴다(단서 2개 이상 겹쳐야 인정)
+#   — 기존 로직 비중이 큰 상태에서 시작해 판정이 쌓일수록 ✅ 비중을 기존 기준(config 팀 맞춤 공고)과 같게 올린다.
+# - FEEDBACK_STALE_DAYS일이 지난 ✅도 엄격하게 쓴다(사업 방향이 바뀌어도 옛 기록이 계속 끌고 가지 않게).
+# - ✅ 기준 때문에 올라간 공고가 FEEDBACK_RETIRE_MIN_JUDGED건 이상 판정됐는데 ❌ 비율이 FEEDBACK_RETIRE_NOT_FIT_RATIO 이상이면
+#   그 ✅ 기준은 쓰지 않는다(자동 퇴출).
+FEEDBACK_FULL_WEIGHT_JUDGED = 100
+FEEDBACK_STALE_DAYS = 180
+FEEDBACK_RETIRE_MIN_JUDGED = 3
+FEEDBACK_RETIRE_NOT_FIT_RATIO = 0.5
+
 # 2026-10-14 요청: 중소기업·업종 제한이 있어도 우리가 들어갈 만한 사업이면 빼지 않고 보낸다(지역제한은 그대로 제외 — 같은 날 요청) — 건국대 수주 건은
 # 중소기업 제한이 있었지만 파트너사 명의로 입찰해 따고 실제 운영은 우리가 했다. 아래 조건 중 하나면 '파트너사 입찰 검토'로 남긴다
 # (classify.partner_bid_fit): 팀 맞춤 공고와 비슷함 / 과거 수주 사업(WIN_HISTORY·PARTNER_BID_WINS)과 비슷함 /

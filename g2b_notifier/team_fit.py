@@ -8,6 +8,8 @@
   2) 기준 공고 제목에서 자동으로 뽑은 단어: 최근 공고 제목에 2번 이상, AUTO_TOKEN_MAX_DF번 이하로 나오는 단어만 쓴다 —
      한 번만 나오는 말("SNUH", "SCOUT" 같은 기관 약칭·사업 코드)은 그 공고에만 맞고, 너무 흔한 말("용역", "개발")은 단서가 안 된다.
 판정: 기준 공고 하나와 strong 주제가 1개 이상 겹치거나, weak 주제·자동 단어가 합쳐 2개 이상 겹치면 비슷한 공고다.
+기준 공고에 "strict": True가 붙어 있으면(카드 ✅로 들어온 기준이 아직 적을 때·오래된 ✅, learning.py) strong 주제 하나로는
+부족하고 단서가 2개 이상 겹쳐야 한다.
 기준 공고가 늘면 주제와 단어가 자동으로 넓어진다(TEAM_FIT_SEEDS에 추가).
 """
 
@@ -68,7 +70,7 @@ class TeamFitModel:
         for ref, ref_concepts, ref_words in self.refs:
             shared = concepts & ref_concepts
             shared_words = {w for w in ref_words if w in norm}
-            if not (shared & _STRONG) and len(shared) + len(shared_words) < 2:
+            if len(shared) + len(shared_words) < 2 and (ref.get("strict") or not (shared & _STRONG)):
                 continue
             cues = sorted(shared) + sorted(shared_words)
             if best is None or len(cues) > len(best[1]):

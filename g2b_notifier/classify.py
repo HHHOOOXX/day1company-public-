@@ -190,6 +190,15 @@ def set_team_fit_model(model) -> None:
     _TEAM_FIT_MODEL = model
 
 
+# 2026-10-16: ❌가 더 많은 공고로 만든 모델(learning.py). 이 공고들과 더 비슷하면 팀 맞춤으로 올리지 않는다.
+_NOT_FIT_MODEL = None
+
+
+def set_not_fit_model(model) -> None:
+    global _NOT_FIT_MODEL
+    _NOT_FIT_MODEL = model
+
+
 def team_fit_match(item: dict):
     """팀 맞춤 공고와 주제가 비슷하면 (기준 공고, 겹친 단서), 아니면 None. 제목에 제외 키워드가 있는 공고는 비슷해도 None —
     2026-10-12 확인: "체험관 공간 조성 및 교육콘텐츠 제작·설치"가 '교육콘텐츠'로 걸렸다(설치 공사가 본업)."""
@@ -198,7 +207,13 @@ def team_fit_match(item: dict):
     title = item.get("bidNtceNm", "")
     if title_exclude_hits(title):
         return None
-    return _TEAM_FIT_MODEL.match(title)
+    fit = _TEAM_FIT_MODEL.match(title)
+    if fit and _NOT_FIT_MODEL is not None:
+        # ❌ 받은 공고와 단서가 같거나 더 많이 겹치면 '비슷한 팀 맞춤 공고'로 보지 않는다.
+        not_fit = _NOT_FIT_MODEL.match(title)
+        if not_fit and len(not_fit[1]) >= len(fit[1]):
+            return None
+    return fit
 
 
 # 2026-10-14: 과거 수주 사업(WIN_HISTORY·PARTNER_BID_WINS) 사업명으로 만든 비슷한 공고 판정 모델(team_fit.TeamFitModel).
@@ -417,7 +432,7 @@ def attach_confidence(items: list, alio_orgs: set = None) -> list:
         if hits:
             downgrade(item, f"제목에 제외 키워드 {hits}가 있지만 교육·콘텐츠 신호가 강함 — 우선 확인 필요", priority=True)
         fit = team_fit_match(item)
-        item["_team_fit"] = {"ref": fit[0]["title"], "cues": fit[1]} if fit else None
+        item["_team_fit"] = {"ref_id": fit[0]["id"], "ref": fit[0]["title"], "cues": fit[1]} if fit else None
     return items
 
 
