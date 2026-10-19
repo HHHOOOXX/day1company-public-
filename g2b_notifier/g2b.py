@@ -54,6 +54,10 @@ HQ_REGION_TOKEN = "서울"
 # 페이지 수집이 재시도 끝에도 실패한 경우 여기 쌓인다.
 # run_daily_notification이 발송 직전에 확인해서, 비어있지 않으면 슬랙 메시지에 경고를 붙인다.
 COLLECTION_WARNINGS = []
+# 2026-10-19: 목록 조회가 첫 응답조차 못 받은 오퍼레이션(서버 연결 실패·시간 상한). cli가 '수집 실패'로 보고
+# "0건 확인했어요"를 보내지 않는 데 쓴다 — 10/19 apis.data.go.kr 연결 시간 초과로 금~일 공고를 통째로 못 받았는데
+# 0건 메시지가 나가고 발송 기록까지 남아 백업 실행이 조용히 끝났다.
+FAILED_FETCHES = []
 
 # 전체 수집 단계(나라장터 입찰+사전규격+기업마당 합산)의 시간 상한.
 # run_daily_notification 시작 시 set_collection_deadline()으로 설정된다.
@@ -319,6 +323,8 @@ def _fetch_paginated(operation: str, begin_str: str, end_str: str, page_size: in
 
     if failed_pages:
         print(f"[경고] {failed_pages}개 페이지는 재시도 후에도 실패해서 건너뛰었습니다 (일부 공고 누락 가능).")
+    if total_count is None:
+        FAILED_FETCHES.append(operation)
     print(f"[완료] {len(all_items)}건 수집됨 (전체 {total_count}건 중, max_pages={max_pages} 제한)")
     return all_items
 
