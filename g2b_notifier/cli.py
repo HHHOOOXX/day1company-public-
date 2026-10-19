@@ -418,6 +418,7 @@ def run_daily_notification(
         summary_lines.append(f"사전규격 {len(pre_spec_pairs)}건")
     if include_bizinfo and BIZINFO_SERVICE_KEY:
         summary_lines.append(f"기업마당 {len(bizinfo_pairs)}건")
+    summary_lines.append(f"스타빌 {len(starbill_pairs)}건")
     if include_agency:
         summary_lines.append(f"기관 홈페이지 {len(agency_pairs)}건")
     summary_text = " / ".join(summary_lines) + " 확인했어요"
