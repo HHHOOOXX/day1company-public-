@@ -1,5 +1,7 @@
 name: Probe Starbill (temporary)
 # 임시: 스타빌(starbill.co.kr) 공고 페이지가 GitHub 서버에서 열리는지와 페이지 구조를 확인한다. 확인 후 삭제.
+# 스타빌 서버가 중간 인증서를 보내지 않아(curl 60), 서버 인증서의 AIA(CA Issuers) 주소에서 중간 인증서를 받아
+# 시스템 신뢰 목록에 더한 묶음으로 검증한다(검증은 끄지 않는다).
 on:
   push:
     branches: [claude/intelligent-faraday-1pcccm]
@@ -9,9 +11,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
+          echo | openssl s_client -connect www.starbill.co.kr:443 -servername www.starbill.co.kr 2>/dev/null | openssl x509 > leaf.pem
+          openssl x509 -in leaf.pem -noout -subject -issuer -enddate
+          AIA=$(openssl x509 -in leaf.pem -noout -text | grep -A1 "CA Issuers" | grep -o 'http[^ ]*' | head -1)
+          echo "AIA: $AIA"
+          curl -sS -m 30 -o inter.der "$AIA"
+          (openssl x509 -inform der -in inter.der -out inter.pem 2>/dev/null || cp inter.der inter.pem)
+          openssl x509 -in inter.pem -noout -subject -issuer
+          cat /etc/ssl/certs/ca-certificates.crt inter.pem > bundle.pem
           for u in "https://www.starbill.co.kr/ebidEmail.do?orgSeq=10899&buyerCode=mju" "https://www.starbill.co.kr/" ; do
             echo "===== $u"
-            curl -sS -L -m 30 -A "Mozilla/5.0" -D - -o page.html "$u" || true
+            curl -sS --cacert bundle.pem -L -m 30 -A "Mozilla/5.0" -D - -o page.html "$u" || true
             wc -c page.html || true
-            iconv -f euc-kr -t utf-8 page.html 2>/dev/null | sed 's/\t/ /g' | grep -v '^\s*$' | head -400 || sed -n 1,400p page.html
+            (iconv -f euc-kr -t utf-8 page.html 2>/dev/null || cat page.html) | sed 's/\t/ /g' | grep -v '^\s*$' | head -600
+            rm -f page.html
           done
