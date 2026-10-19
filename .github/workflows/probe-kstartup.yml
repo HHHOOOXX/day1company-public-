@@ -1,5 +1,5 @@
 name: Probe K-Startup (temporary)
-# 임시(2차): K-Startup 모집중 목록이 지금 어떤 구조로 오는지 확인한다(창업진흥원 수집이 계속 0건). 확인 후 삭제.
+# 임시(3차): K-Startup 모집중 목록이 지금 어떤 구조로 오는지 확인한다(창업진흥원 수집이 계속 0건). 확인 후 삭제.
 on:
   push:
     branches: [claude/intelligent-faraday-1pcccm]
@@ -20,20 +20,11 @@ jobs:
           python - <<'PY'
           import re
           from g2b_notifier.agencies import HTTP, _TIMEOUT, _text
-          from g2b_notifier.agencies import _fetch_kised
-          print("fetch_kised rows", len(_fetch_kised(3)))
-          allorgs = []
-          for page in (1, 2, 3):
-              b = HTTP.get(f"https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?page={page}", timeout=_TIMEOUT).text
-              b = b[b.find('id="bizPbancList"'):]
-              if page == 1:
-                  k = b.find("go_view(")
-                  print("--- first item markup"); print(b[max(0, k - 300):k + 1800])
-              m = re.findall(r"go_view\((\d+)\);'>\s*<div class=\"tit_wrap\">\s*<p class=\"tit\">(.*?)</p>.*?<div class=\"bottom\">(.*?)</div>", b, re.S)
-              print("page", page, "regex matches", len(m), "go_view", b.count("go_view("))
-              for sn, t, bottom in m:
-                  sp = [_text(x) for x in re.findall(r'<span class="list">(.*?)</span>', bottom, re.S)]
-                  allorgs.append(sp[1] if len(sp) > 1 else "?")
-          print("orgs", allorgs)
-          print("kised-like", [o for o in allorgs if "창업진흥" in o])
+          b = HTTP.get("https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?page=1", timeout=_TIMEOUT).text
+          b = b[b.find('id="bizPbancList"'):]
+          k = b.find('<li class="notice">')
+          print("notice li count", b.count('<li class="notice">'))
+          print("--- first notice li"); print(re.sub(r"\s+", " ", b[k:k + 3000]))
+          for m in re.finditer("창업진흥원", b):
+              print("CTX:", re.sub(r"\s+", " ", b[max(0, m.start() - 200):m.start() + 60]))
           PY
