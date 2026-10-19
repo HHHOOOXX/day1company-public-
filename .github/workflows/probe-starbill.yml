@@ -1,5 +1,5 @@
 name: Probe Starbill (temporary)
-# 임시: 스타빌 수집(starbill.py)만 따로 돌려 시간·결과를 확인한다. 확인 후 삭제.
+# 임시: 스타빌 수집(starbill.py)만 따로 돌려 시간·결과를 확인한다(2차: 표 읽기 수정 후). 확인 후 삭제.
 on:
   push:
     branches: [claude/intelligent-faraday-1pcccm]

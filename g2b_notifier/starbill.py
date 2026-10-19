@@ -35,13 +35,10 @@ TIMEOUT = 20
 TOTAL_LIMIT = 90  # 스타빌 전체 수집 상한(초) — get_relevant_starbill 참고
 _HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-# 첫 화면 공고 표의 한 줄: 항목(용역/물품…), 구분(입찰/견적…), 발주처, 링크, 공고명, 접수마감일("10-28 15:00").
-_ROW_RE = re.compile(
-    r"<tr>\s*<td>\s*(?P<kind>.*?)\s*</td>\s*<td>\s*(?P<type>.*?)\s*</td>\s*<td class=\"left\">\s*(?P<org>.*?)\s*</td>"
-    r"\s*<td class=\"left\">\s*<a href=\"(?P<href>/ebidEmail\.do\?[^\"]+)\">\s*(?P<title>.*?)</a>\s*</td>"
-    r"\s*<td class=\"date\">\s*(?P<due>.*?)\s*</td>",
-    re.S,
-)
+# 첫 화면 공고 표의 한 줄: 항목(용역/물품…), 구분(입찰/견적…), 발주처, 공고명(상세 링크), 접수마감일("10-28 15:00").
+# 표 전체를 정규식 하나로 읽지 않는다 — 10/19 CI에서 여러 칸을 .*?로 잇는 정규식이 실제 첫 화면(35KB)에서 끝없이 되짚어
+# (정규식은 실행 중 GIL을 놓지 않아) 시간 상한 스레드까지 멈췄다. <tr> 단위로 자른 뒤 칸(<td>)을 하나씩 읽는다.
+_HREF_RE = re.compile(r'href="(/ebidEmail\.do\?[^"]+)"')
 _TAG_RE = re.compile(r"<[^>]+>")
 _BODY_RE = re.compile(r'<div class="ebidConFull_body">(.*?)</div>', re.S)
 
@@ -97,19 +94,24 @@ def _deadline(due: str, today) -> str:
 def parse_list(html: str, today) -> list:
     """첫 화면 공고 표 → 공고 dict 목록(용역 입찰만). 나라장터 공고와 같은 키를 써서 분류·카드 코드를 그대로 쓴다."""
     items = []
-    for m in _ROW_RE.finditer(html):
-        kind, bid_type = _text(m["kind"]), _text(m["type"])
+    for row in html.split("<tr")[1:]:
+        row = row.split("</tr>", 1)[0]
+        tds = [c.split(">", 1)[-1].split("</td>", 1)[0] for c in row.split("<td")[1:]]
+        link = _HREF_RE.search(row)
+        if len(tds) < 5 or not link:
+            continue
+        kind, bid_type = _text(tds[0]), _text(tds[1])
         if kind != "용역" or "입찰" not in bid_type:
             continue
-        href = unescape(m["href"])
+        href = unescape(link.group(1))
         q = dict(re.findall(r"(\w+)=([^&]+)", href.split("?", 1)[1]))
         items.append({
             "bidNtceNo": f"SB-{q.get('buyerCode', '')}-{q.get('orgSeq', '')}",
             "bidNtceOrd": "0",
-            "bidNtceNm": _text(m["title"]),
-            "ntceInsttNm": _text(m["org"]),
+            "bidNtceNm": _text(tds[3]),
+            "ntceInsttNm": _text(tds[2]),
             "bidNtceDtlUrl": BASE_URL + href,
-            "bidClseDt": _deadline(_text(m["due"]), today),
+            "bidClseDt": _deadline(_text(tds[4]), today),
             "_detail_path": href,
         })
     return items
