@@ -1,0 +1,33 @@
+name: Probe K-Startup (temporary)
+# 임시: K-Startup 모집중 목록이 지금 어떤 구조로 오는지 확인한다(창업진흥원 수집이 계속 0건). 확인 후 삭제.
+on:
+  push:
+    branches: [claude/intelligent-faraday-1pcccm]
+    paths: [.github/workflows/probe-kstartup.yml]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python - <<'PY'
+          import re
+          from g2b_notifier.agencies import HTTP, _TIMEOUT, _text
+          r = HTTP.get("https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?page=1", timeout=_TIMEOUT)
+          b = r.text
+          print("status", r.status_code, "len", len(b), "final", r.url)
+          print("bizPbancList at", b.find('id="bizPbancList"'), "go_view count", b.count("go_view("))
+          i = b.find("go_view(")
+          print("--- around first go_view")
+          print(b[max(0, i - 600):i + 2500] if i >= 0 else b[:3000])
+          orgs = re.findall(r'<span class="list">(.*?)</span>', b, re.S)
+          print("--- span.list sample", [_text(x) for x in orgs[:30]])
+          print("창업진흥원 occurrences", b.count("창업진흥원"))
+          PY
