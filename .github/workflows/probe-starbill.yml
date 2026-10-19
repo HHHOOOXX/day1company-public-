@@ -1,0 +1,17 @@
+name: Probe Starbill (temporary)
+# 임시: 스타빌(starbill.co.kr) 공고 페이지가 GitHub 서버에서 열리는지와 페이지 구조를 확인한다. 확인 후 삭제.
+on:
+  push:
+    branches: [claude/intelligent-faraday-1pcccm]
+    paths: [.github/workflows/probe-starbill.yml]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          for u in "https://www.starbill.co.kr/ebidEmail.do?orgSeq=10899&buyerCode=mju" "https://www.starbill.co.kr/" ; do
+            echo "===== $u"
+            curl -sS -L -m 30 -A "Mozilla/5.0" -D - -o page.html "$u" || true
+            wc -c page.html || true
+            iconv -f euc-kr -t utf-8 page.html 2>/dev/null | sed 's/\t/ /g' | grep -v '^\s*$' | head -400 || sed -n 1,400p page.html
+          done
