@@ -1,9 +1,9 @@
 name: Probe K-Startup (temporary)
-# 임시(3차): K-Startup 모집중 목록이 지금 어떤 구조로 오는지 확인한다(창업진흥원 수집이 계속 0건). 확인 후 삭제.
+# 임시(4차): 고친 _fetch_kised가 실제 목록에서 몇 건을 남기는지 확인한다. 확인 후 삭제.
 on:
   push:
     branches: [claude/intelligent-faraday-1pcccm]
-    paths: [.github/workflows/probe-kstartup.yml]
+    paths: [.github/workflows/probe-kstartup.yml, g2b_notifier/agencies.py]
 jobs:
   probe:
     runs-on: ubuntu-latest
@@ -18,13 +18,9 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           python - <<'PY'
-          import re
-          from g2b_notifier.agencies import HTTP, _TIMEOUT, _text
-          b = HTTP.get("https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?page=1", timeout=_TIMEOUT).text
-          b = b[b.find('id="bizPbancList"'):]
-          k = b.find('<li class="notice">')
-          print("notice li count", b.count('<li class="notice">'))
-          print("--- first notice li"); print(re.sub(r"\s+", " ", b[k:k + 3000]))
-          for m in re.finditer("창업진흥원", b):
-              print("CTX:", re.sub(r"\s+", " ", b[max(0, m.start() - 200):m.start() + 60]))
+          from g2b_notifier.agencies import _fetch_kised, _fetch_one
+          rows = _fetch_one("K-Startup 사업공고(창업진흥원)", lambda: _fetch_kised(5))
+          print("kept", len(rows))
+          for r in rows:
+              print(r["bidNtceDt"], "|", r["ntceInsttNm"], "|", r["bidNtceNm"][:70], "|", r["bidClseDt"])
           PY
