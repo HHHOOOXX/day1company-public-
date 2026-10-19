@@ -59,6 +59,7 @@ from .config import (
     SERVICE_KEY,
     SLACK_BOT_TOKEN,
     SLACK_CHANNEL_ID,
+    OPERATIONS,
     SLACK_MENTION,
     TEAM_FIT_SEEDS,
     FEEDBACK_LINK_TOKEN,
@@ -68,6 +69,7 @@ from .config import (
 )
 from .g2b import (
     COLLECTION_WARNINGS,
+    FAILED_FETCHES,
     RAW_SOURCE_TITLES,
     analyze_classifications,
     fetch_pre_spec_preview,
@@ -207,6 +209,10 @@ def _collect_agency_notices(conn, start_date, end_date, alio_orgs, other_items) 
         return []
 
 
+class CollectionFailed(Exception):
+    """나라장터 목록을 한 페이지도 못 받아 그날 발송을 하지 않았다(워크플로를 실패로 표시해 알 수 있게 한다)."""
+
+
 def run_daily_notification(
     categories=("용역",), include_pre_spec: bool = True, include_bizinfo: bool = True, quiet_if_empty: bool = False,
     dry_run: bool = False, include_agency: bool = True, date_range=None,
@@ -260,6 +266,7 @@ def run_daily_notification(
     collection_started = time.monotonic()
     all_pairs = []
     COLLECTION_WARNINGS.clear()
+    FAILED_FETCHES.clear()
 
     alio_orgs = _fetch_alio_orgs()
 
@@ -449,6 +456,22 @@ def run_daily_notification(
     if COLLECTION_WARNINGS:
         warning_lines = "\n".join(f"- {w}" for w in COLLECTION_WARNINGS)
         print(f"[경고] 일부 데이터 수집 실패(슬랙에는 미포함):\n{warning_lines}")
+
+    # 2026-10-19: 나라장터 입찰공고 목록을 한 페이지도 못 받았으면(서버 연결 실패 등) 수집 실패로 본다. "0건 확인했어요"를
+    # 보내지 않고 발송 기록도 남기지 않아, 백업 실행(--quiet-if-empty)과 다음 재실행이 같은 기간을 다시 가져가게 한다.
+    failed_ops = {OPERATIONS[c] for c in categories if c in OPERATIONS} & set(FAILED_FETCHES)
+    if failed_ops:
+        period = start_date.isoformat() if start_date == end_date else f"{start_date.isoformat()} ~ {end_date.isoformat()}"
+        print(f"[수집 실패] 나라장터 입찰공고 목록을 받지 못했어요({', '.join(sorted(failed_ops))}) — 발송·발송 기록 없이 종료")
+        if not quiet_if_empty and not dry_run:
+            notice = (
+                f"{SLACK_MENTION}\n\u26A0\uFE0F 나라장터 서버에 연결되지 않아 {period} 게시 공고를 가져오지 못했어요. "
+                "백업 실행에서 다시 가져와 보낼게요."
+            )
+            if not (use_bot and post_with_bot(notice)):
+                send_to_slack(notice)
+        conn.close()
+        raise CollectionFailed(period)
 
     if quiet_if_empty and not all_pairs:
         print("[백업 실행] 새로 보낼 공고가 없어서 조용히 종료합니다.")
@@ -645,6 +668,9 @@ def main():
             run_daily_notification(
                 categories=categories, quiet_if_empty=quiet_if_empty, dry_run=dry_run, date_range=date_range
             )
+        except CollectionFailed as exc:
+            print(f"[수집 실패] {exc} 게시 공고를 못 가져와 발송하지 않았어요. 백업 실행 또는 수동 재실행으로 다시 가져옵니다.")
+            sys.exit(1)
         except Exception as exc:
             # 소스별 try/except로도 못 막는, 완전히 예상 못한 버그용 마지막 안전망.
             # 팀 채널에는 정리된 공고문만 보여야 하므로 슬랙으로는 알리지 않는다 —
