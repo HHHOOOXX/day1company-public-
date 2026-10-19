@@ -12,6 +12,7 @@ import os
 import re
 import ssl
 import tempfile
+import threading
 from datetime import datetime
 from html import unescape
 
@@ -31,6 +32,7 @@ from .g2b import COLLECTION_WARNINGS
 HOST = "www.starbill.co.kr"
 BASE_URL = f"https://{HOST}"
 TIMEOUT = 20
+TOTAL_LIMIT = 90  # 스타빌 전체 수집 상한(초) — get_relevant_starbill 참고
 _HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # 첫 화면 공고 표의 한 줄: 항목(용역/물품…), 구분(입찰/견적…), 발주처, 링크, 공고명, 접수마감일("10-28 15:00").
@@ -141,7 +143,33 @@ def _check_detail(item: dict) -> bool:
 
 
 def get_relevant_starbill(alio_orgs=None, today=None) -> list:
-    """스타빌 첫 화면의 용역 입찰 중 관심 공고. 접속 실패면 빈 목록(경고만 남긴다)."""
+    """스타빌 첫 화면의 용역 입찰 중 관심 공고. 접속 실패·TOTAL_LIMIT초 초과면 빈 목록(경고만 남긴다).
+    10/19 시험 실행에서 스타빌 접속이 응답 없이 멈춰 실행이 10분 넘게 끝나지 않았다 — 별도 스레드에서 돌리고 상한이
+    지나면 기다리지 않고 나머지 발송을 진행한다(daemon 스레드라 프로세스 종료도 막지 않는다)."""
+    result = {}
+
+    def work():
+        try:
+            result["items"] = _collect(alio_orgs, today)
+        except Exception as exc:
+            result["error"] = exc
+
+    print(f"[요청] 스타빌 첫 화면 공고 목록 (최대 {TOTAL_LIMIT}초)")
+    worker = threading.Thread(target=work, daemon=True)
+    worker.start()
+    worker.join(TOTAL_LIMIT)
+    if worker.is_alive():
+        print(f"[스타빌] {TOTAL_LIMIT}초 안에 끝나지 않아 건너뜀(응답 없음)")
+        COLLECTION_WARNINGS.append(f"스타빌: {TOTAL_LIMIT}초 초과로 건너뜀")
+        return []
+    if "error" in result:
+        print(f"[스타빌] 수집 중 오류: {result['error']!r}")
+        COLLECTION_WARNINGS.append(f"스타빌: 예외 발생 ({result['error'].__class__.__name__})")
+        return []
+    return result["items"]
+
+
+def _collect(alio_orgs, today) -> list:
     today = today or datetime.now().date()
     try:
         items = parse_list(_get("/"), today)
