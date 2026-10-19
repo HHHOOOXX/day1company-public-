@@ -33,6 +33,7 @@ import traceback
 from datetime import datetime
 
 import os
+import re
 
 from . import db
 from .proposals import print_report as print_proposal_report, sync_proposals
@@ -210,6 +211,11 @@ def _collect_agency_notices(conn, start_date, end_date, alio_orgs, other_items) 
         return []
 
 
+def _norm_title(title: str) -> str:
+    """공고명 비교용: [재공고1회차] 같은 대괄호 머리말·공백·기호를 지운다."""
+    return re.sub(r"[^0-9A-Za-z가-힣]", "", re.sub(r"\[[^\]]*\]|\([^)]*공고[^)]*\)", "", title or ""))
+
+
 class CollectionFailed(Exception):
     """나라장터 목록을 한 페이지도 못 받아 그날 발송을 하지 않았다(워크플로를 실패로 표시해 알 수 있게 한다)."""
 
@@ -329,6 +335,14 @@ def run_daily_notification(
         traceback.print_exc()
         COLLECTION_WARNINGS.append(f"스타빌: 예외 발생 ({exc.__class__.__name__})")
         starbill_items = []
+    # 나라장터에도 같이 올린 공고(예: 경민대 "교양공감콘서트 온라인 콘텐츠 제작")는 이미 받은 공고명과 겹치면 뺀다.
+    seen_titles = {_norm_title(t) for t in db.get_all_titles(conn)} | {
+        _norm_title(i.get("bidNtceNm", "")) for i in bids + pre_specs + bizinfo_items
+    }
+    dup = [i for i in starbill_items if _norm_title(i["bidNtceNm"]) in seen_titles]
+    if dup:
+        print(f"[스타빌] 나라장터·기업마당에 이미 있는 공고 {len(dup)}건 제외: " + ", ".join(i["bidNtceNm"][:30] for i in dup))
+    starbill_items = [i for i in starbill_items if i not in dup]
     starbill_pairs = _filter_unnotified(conn, "starbill", starbill_items, today_str)
     all_pairs += starbill_pairs
     urgent_entries += [("스타빌", "마감", item) for _, item in starbill_pairs]
