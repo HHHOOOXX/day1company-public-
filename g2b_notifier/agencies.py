@@ -271,11 +271,14 @@ def _fetch_iitp(menu: str, board_seq: str, key: str, page: int = 1) -> list:
     return rows
 
 
-def _fetch_kised(pages: int = 3) -> list:
-    """창업진흥원 사업공고. 창업진흥원 홈페이지 사업공고 목록은 HTML에 없고(입찰공고는 로그인이 필요한
-    자체 전자입찰 시스템 ebid.kised.or.kr), 같은 공고가 K-Startup 포털(창업진흥원 운영)에 올라온다.
-    K-Startup 모집중 목록은 전 기관 창업지원사업이 섞여 하루 15건 넘게 올라오므로, 등록 최신순 몇
-    페이지를 읽고 기관명이 창업진흥원인 건만 남긴다. 카드 하단 span: [사업명, 기관, 등록일자, 시작일자, 마감일자, 조회]."""
+def _fetch_kised(pages: int = 5) -> list:
+    """K-Startup(창업진흥원 운영) 모집중 사업공고. 창업진흥원 홈페이지 사업공고 목록은 HTML에 없고(입찰공고는 로그인이
+    필요한 자체 전자입찰 시스템 ebid.kised.or.kr), 공고는 K-Startup 포털에 올라온다. 카드 하단 span:
+    [사업명, 기관, 등록일자, 시작일자, 마감일자, 조회].
+    2026-10-19 수정: 예전에는 기관명이 '창업진흥원'인 건만 남겼는데, 실제 목록(최신 45건 확인)은 창조경제혁신센터·
+    대학·지자체 진흥원 등이 올린 글이고 '창업진흥원'은 푸터에만 있어 늘 0건이었다. 이제 창업진흥원 글과 함께, 어느
+    기관 글이든 운영기관·수행기관·용역처럼 우리가 사업자로 들어가는 모집(_is_vendor_call)을 남긴다. 창업기업·참가자
+    모집 글은 우리 사업이 아니라 뺀다. 기관명은 실제 게시 기관을 쓴다."""
     rows = []
     for page in range(1, pages + 1):
         body = HTTP.get(f"https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?page={page}",
@@ -286,11 +289,13 @@ def _fetch_kised(pages: int = 3) -> list:
             body, re.S,
         ):
             spans = [_text(x) for x in re.findall(r'<span class="list">(.*?)</span>', bottom, re.S)]
-            if len(spans) < 5 or "창업진흥원" not in spans[1]:
+            if len(spans) < 5:
                 continue
-            rows.append(_row("창업진흥원", "kised_biz", sn, title,
-                             f"https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?schM=view&pbancSn={sn}",
-                             (_dates(spans[2]) or [""])[0], (_dates(spans[4]) or [""])[0]))
+            row = _row(spans[1] or "창업진흥원", "kised_biz", sn, title,
+                       f"https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?schM=view&pbancSn={sn}",
+                       (_dates(spans[2]) or [""])[0], (_dates(spans[4]) or [""])[0])
+            if "창업진흥원" in spans[1] or _is_vendor_call(row):
+                rows.append(row)
     return rows
 
 
@@ -334,11 +339,11 @@ AGENCY_SOURCES = [
     ("소진공 사업공고", _paged(_fetch_semas_biz)),
     ("중진공 공지사항", _paged(_fetch_kosmes_notice)),
     ("중진공 입찰정보", _paged(_fetch_kosmes_bid)),
-    ("창업진흥원 사업공고(K-Startup)", lambda: _fetch_kised(AGENCY_PAGES)),
+    ("K-Startup 사업공고(창업진흥원)", lambda: _fetch_kised(5)),
 ]
 
-# 창업진흥원은 K-Startup 전체 목록 중 해당 기관 건만 고르는 방식이라, 며칠 동안 0건이어도 정상이다.
-_EMPTY_OK_SOURCES = {"창업진흥원 사업공고(K-Startup)"}
+# K-Startup은 전체 목록 중 창업진흥원 글·운영기관 모집 글만 고르는 방식이라, 며칠 동안 0건이어도 정상이다.
+_EMPTY_OK_SOURCES = {"K-Startup 사업공고(창업진흥원)"}
 
 # 입찰공고 전용 게시판. 제목에 '입찰' 같은 단어가 없어도(중진공: "OO 연구용역") 전부 나라장터에서 같은 공고를 찾아본다.
 _BID_BOARD_KEYS = {"nipa_bid", "nia_bid", "iitp_bid", "kosmes_bid"}
