@@ -1,0 +1,32 @@
+name: Probe Starbill (temporary)
+# 임시: 스타빌 수집(starbill.py)만 따로 돌려 시간·결과를 확인한다. 확인 후 삭제.
+on:
+  push:
+    branches: [claude/intelligent-faraday-1pcccm]
+    paths: [.github/workflows/probe-starbill.yml]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: |
+          python -u - <<'PY'
+          import time
+          t=time.time()
+          from g2b_notifier import starbill
+          print("bundle start", flush=True)
+          try:
+              print("bundle", starbill._ca_bundle(), round(time.time()-t,1), flush=True)
+          except Exception as e:
+              print("bundle error", repr(e), flush=True)
+          items = starbill.get_relevant_starbill()
+          print("done", round(time.time()-t,1), flush=True)
+          for i in items: print(i["bidNtceNo"], i["ntceInsttNm"], i["bidNtceNm"], i["bidClseDt"], i.get("_tier"), i.get("_reasons"))
+          PY
+        env:
+          PYTHONUNBUFFERED: "1"
