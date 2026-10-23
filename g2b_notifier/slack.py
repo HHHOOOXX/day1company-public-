@@ -159,13 +159,13 @@ def format_overflow_messages(sections: list, after_item, max_blocks: int = 50) -
     """카드에 못 넣은 공고를 공고마다 섹션 + after_item 블록(피드백 버튼)으로 만들어 스레드 댓글 여러 개로 나눈다.
     반환: [(폴백 텍스트, blocks), ...] — 메시지 하나당 블록 max_blocks개 이하.
     2026-10-13 요청: 스레드 목록에도 공고마다 ✅/❌ 버튼. 공고 한 건이 블록 2개라 20건 남짓마다 댓글을 나눈다."""
-    messages, blocks, count = [], [], 0
+    messages, blocks, count, block_ids = [], [], 0, set()
 
     def flush():
-        nonlocal blocks, count
+        nonlocal blocks, count, block_ids
         if blocks:
             messages.append((f"카드에 못 넣은 공고 {count}건", blocks))
-        blocks, count = [], 0
+        blocks, count, block_ids = [], 0, set()
 
     for title, entries, first_heading in map(_with_heading, sections):
         if not entries:
@@ -181,6 +181,12 @@ def format_overflow_messages(sections: list, after_item, max_blocks: int = 50) -
             if len(blocks) + len(head) + len(item_blocks) > max_blocks:
                 flush()
                 head = [mrkdwn_section(heading)]
+            # 한 메시지 안에 block_id가 겹치면 슬랙이 메시지 전체를 invalid_blocks로 거부한다(2026-10-23) — 같은 공고의
+            # 두 번째 버튼은 뺀다.
+            if extra and extra.get("block_id") in block_ids:
+                item_blocks.pop()
+            elif extra and extra.get("block_id"):
+                block_ids.add(extra["block_id"])
             blocks += head + item_blocks
             count += 1
             first = False

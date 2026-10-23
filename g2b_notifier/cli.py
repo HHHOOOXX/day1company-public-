@@ -450,9 +450,14 @@ def run_daily_notification(
         "_중소기업·업종 제한이 있어 우리 이름으로는 못 들어가지만 사업 내용이 잘 맞는 공고예요. "
         "파트너사 명의로 입찰하고 운영은 우리가 하는 방식(건국대 사례)으로 검토해 보세요._"
     )
+    # 2026-10-23: 카드에 못 넣은 파트너사 입찰 공고가 아래 목록에도 또 나와 같은 댓글 안에 같은 피드백 버튼(block_id)이
+    # 두 번 들어갔고, 슬랙이 invalid_blocks로 스레드 댓글을 통째로 거부했다 — 파트너사 묶음에 나온 공고는 아래 목록에서 뺀다.
+    in_partner = {id(e[2]) for e in partner_entries}
     overflow_sections = [
         (partner_title, partner_entries, partner_heading),
-        (core_title, core_rest), (review_title, review_rest), (agency_title, agency_rest),
+        (core_title, [e for e in core_rest if id(e[2]) not in in_partner]),
+        (review_title, [e for e in review_rest if id(e[2]) not in in_partner]),
+        (agency_title, agency_rest),
     ]
     overflow_text = format_overflow_text(overflow_sections, today)
     use_bot = bool(SLACK_BOT_TOKEN and SLACK_CHANNEL_ID)
@@ -579,9 +584,14 @@ def run_daily_notification(
             else:
                 replies = [(overflow_text, chunk_mrkdwn_blocks(overflow_text))]
             for reply_text, reply_blocks in replies:
-                if post_with_bot(reply_text, blocks=reply_blocks, thread_ts=ts) is None:
+                if post_with_bot(reply_text, blocks=reply_blocks, thread_ts=ts) is not None:
+                    continue
+                # 버튼이 붙은 댓글이 거부되면(invalid_blocks 등) 그 부분만 버튼 없이 목록 글로 다시 보낸다.
+                fallback = "\n".join(b["text"]["text"] for b in reply_blocks if b.get("type") == "section")
+                if post_with_bot(reply_text, blocks=chunk_mrkdwn_blocks(fallback), thread_ts=ts) is None:
                     print("[경고] 카드에 못 넣은 공고 스레드 댓글 발송 실패 — 대시보드에서 확인 가능")
                     break
+                print("[경고] 버튼 붙은 스레드 댓글이 거부돼 버튼 없이 다시 보냈어요")
         if not sent:
             # 2026-10-06: 봇 토큰이 틀렸거나 봇이 채널에 초대되지 않았으면(not_in_channel) 그날 메시지가 통째로 안 나가므로
             # 기존 웹훅으로 보낸다. 넘친 공고는 웹훅 방식대로 본문 맨 아래 목록으로 붙인다.
